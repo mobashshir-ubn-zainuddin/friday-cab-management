@@ -45,7 +45,11 @@ router.get('/', authenticate, async (req: AuthenticatedRequest, res) => {
     }
     
     if (upcoming === 'true') {
-      where.date = { gte: new Date() };
+      // Show trips where booking window is currently open OR departure is in the future
+      where.OR = [
+        { status: 'BOOKING_OPEN' },
+        { departureTime: { gte: new Date() } }
+      ];
     }
 
     // If myBookings is true, only show trips the user has booked

@@ -178,14 +178,15 @@ router.post('/', authenticate, checkBlockedStatus, checkPendingPayments, validat
     if (now < trip.bookingStartTime || now > trip.bookingEndTime) {
       return res.status(400).json({
         success: false,
-        error: 'Booking window is closed'
+        error: `Booking window is closed. (Current: ${now.toISOString()}, Start: ${trip.bookingStartTime.toISOString()})`
       });
     }
 
-    if (trip.status !== 'BOOKING_OPEN') {
+    // Allow booking if trip is BOOKING_OPEN OR UPCOMING (within time window)
+    if (trip.status !== 'BOOKING_OPEN' && trip.status !== 'UPCOMING') {
       return res.status(400).json({
         success: false,
-        error: 'Booking is not open for this trip'
+        error: `Booking is not open for this trip (Status: ${trip.status})`
       });
     }
 

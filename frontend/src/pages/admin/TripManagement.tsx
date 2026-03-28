@@ -144,15 +144,26 @@ const TripManagement = () => {
 
   const openEditDialog = (trip: Trip) => {
     setEditingTrip(trip);
+    
+    // Helper to format date for datetime-local input (YYYY-MM-DDTHH:mm)
+    const formatForInput = (dateStr: string) => {
+      if (!dateStr) return '';
+      const d = new Date(dateStr);
+      // We need to adjust for timezone offset to keep the same local time in the input
+      const offset = d.getTimezoneOffset() * 60000;
+      const localDate = new Date(d.getTime() - offset);
+      return localDate.toISOString().slice(0, 16);
+    };
+
     setFormData({
       title: trip.title,
       description: trip.description || '',
       date: trip.date.split('T')[0],
-      bookingStartTime: trip.bookingStartTime.slice(0, 16),
-      bookingEndTime: trip.bookingEndTime.slice(0, 16),
-      cancellationDeadline: trip.cancellationDeadline ? trip.cancellationDeadline.slice(0, 16) : '',
-      departureTime: trip.departureTime.slice(0, 16),
-      returnTime: trip.returnTime ? trip.returnTime.slice(0, 16) : '',
+      bookingStartTime: formatForInput(trip.bookingStartTime),
+      bookingEndTime: formatForInput(trip.bookingEndTime),
+      cancellationDeadline: formatForInput(trip.cancellationDeadline || ''),
+      departureTime: formatForInput(trip.departureTime),
+      returnTime: formatForInput(trip.returnTime || ''),
       maxBookings: trip.maxBookings
     });
   };

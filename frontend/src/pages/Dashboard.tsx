@@ -211,10 +211,6 @@ const Dashboard = () => {
               <span className="text-white">{user?.email}</span>
             </div>
             <div className="flex items-center justify-between py-2 border-b border-slate-800">
-              <span className="text-slate-400">Roll Number</span>
-              <span className="text-white">{user?.rollNumber || 'Not set'}</span>
-            </div>
-            <div className="flex items-center justify-between py-2 border-b border-slate-800">
               <span className="text-slate-400">Phone</span>
               <span className="text-white">{user?.phone || 'Not set'}</span>
             </div>

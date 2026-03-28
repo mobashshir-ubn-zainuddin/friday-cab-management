@@ -98,10 +98,20 @@ const Trips = () => {
 
   const isBookingOpen = (trip: Trip) => {
     const now = new Date();
+    const startTime = new Date(trip.bookingStartTime);
+    const endTime = new Date(trip.bookingEndTime);
+    
+    // Debug logs to see what's happening
+    console.log('Trip:', trip.title);
+    console.log('Now:', now.toISOString());
+    console.log('Start:', startTime.toISOString());
+    console.log('End:', endTime.toISOString());
+    console.log('Status:', trip.status);
+
     return (
-      trip.status === 'BOOKING_OPEN' &&
-      now >= new Date(trip.bookingStartTime) &&
-      now <= new Date(trip.bookingEndTime)
+      (trip.status === 'BOOKING_OPEN' || trip.status === 'UPCOMING') &&
+      now >= startTime &&
+      now <= endTime
     );
   };
 
@@ -235,14 +245,29 @@ const Trips = () => {
                           </Link>
                         </Button>
                       </div>
-                    ) : (
+                    ) : isBookingOpen(trip) ? (
                       <Button
                         onClick={() => setBookingTrip(trip)}
-                        disabled={!isBookingOpen(trip) || hasPendingPayments}
+                        disabled={hasPendingPayments}
                         className="bg-emerald-500 hover:bg-emerald-600 disabled:bg-slate-700 disabled:text-slate-500"
                       >
-                        {isBookingOpen(trip) ? 'Book Now' : 'Booking Closed'}
+                        Book Now
                       </Button>
+                    ) : (
+                      <div className="flex flex-col gap-1">
+                        <Button 
+                          disabled 
+                          variant="outline" 
+                          className="border-slate-700 text-slate-500 disabled:opacity-100"
+                        >
+                          {new Date() < new Date(trip.bookingStartTime) ? 'Booking Not Started' : 'Booking Closed'}
+                        </Button>
+                        {new Date() < new Date(trip.bookingStartTime) && (
+                          <p className="text-[10px] text-slate-500 text-center">
+                            Opens: {formatTime(trip.bookingStartTime)}
+                          </p>
+                        )}
+                      </div>
                     )}
                   </div>
                 </div>

@@ -42,3 +42,6 @@ logs/
 
 # CACHE
 .cache/
+
+*.md
+!README.md

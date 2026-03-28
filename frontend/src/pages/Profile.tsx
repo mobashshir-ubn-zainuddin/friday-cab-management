@@ -16,7 +16,9 @@ import {
   Calendar,
   Shield,
   Save,
-  CheckCircle
+  CheckCircle,
+  CreditCard,
+  Ticket
 } from 'lucide-react';
 
 const Profile = () => {
@@ -249,7 +251,6 @@ const Profile = () => {
             </CardContent>
           </Card>
 
-          {/* Quick Links */}
           <Card className="bg-slate-900 border-slate-800">
             <CardHeader>
               <CardTitle className="text-white text-base">Quick Links</CardTitle>
@@ -257,13 +258,13 @@ const Profile = () => {
             <CardContent className="space-y-2">
               <Button asChild variant="outline" className="w-full justify-start border-slate-700 text-slate-300 hover:bg-slate-800">
                 <a href="/my-bookings">
-                  <IdCard className="w-4 h-4 mr-2" />
+                  <Ticket className="w-4 h-4 mr-2 text-emerald-400" />
                   My Bookings
                 </a>
               </Button>
               <Button asChild variant="outline" className="w-full justify-start border-slate-700 text-slate-300 hover:bg-slate-800">
                 <a href="/payments">
-                  <Phone className="w-4 h-4 mr-2" />
+                  <CreditCard className="w-4 h-4 mr-2 text-emerald-400" />
                   Payments
                 </a>
               </Button>

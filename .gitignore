@@ -1,9 +1,13 @@
-# env files
+# Ignore all markdown files
+*.md
+# except
+!README.md
+
+# ENV
 .env
 .env.*
 backend/.env
 frontend/.env
-
 # logs
 *.log
 
@@ -42,6 +46,3 @@ logs/
 
 # CACHE
 .cache/
-
-*.md
-!README.md

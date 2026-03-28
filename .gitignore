@@ -1,7 +1,8 @@
 # Ignore all markdown files
 *.md
-# except
-!README.md
+
+# Allow ONLY root README
+!/README.md
 
 # ENV
 .env

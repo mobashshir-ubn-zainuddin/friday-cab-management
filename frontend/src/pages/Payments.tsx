@@ -71,6 +71,24 @@ const Payments = () => {
         name: 'Friday Cab System',
         description: `Payment for ${payment.trip?.title}`,
         order_id: (orderData as any).orderId,
+        config: {
+          display: {
+            blocks: {
+              upi: {
+                name: 'Pay via UPI',
+                instruments: [
+                  {
+                    method: 'upi'
+                  }
+                ]
+              }
+            },
+            sequence: ['block.upi'],
+            preferences: {
+              show_default_blocks: false
+            }
+          }
+        },
         handler: async (response: any) => {
           try {
             // Verify payment

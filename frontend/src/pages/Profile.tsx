@@ -26,13 +26,24 @@ const Profile = () => {
   const [formData, setFormData] = useState({
     name: user?.name || '',
     phone: user?.phone || '',
-    department: user?.department || ''
+    department: user?.department || '',
+    rollNumber: user?.rollNumber || ''
   });
 
   const handleSave = async () => {
+    // Roll number validation
+    const rollRegex = /^[0-9]{2}[A-Z]{2}[0-9A-Z]{1,7}$/;
+    if (formData.rollNumber && !rollRegex.test(formData.rollNumber.toUpperCase())) {
+      toast.error('Invalid Roll Number format (e.g., 23MI3PE01)');
+      return;
+    }
+
     setSaving(true);
     try {
-      await userApi.updateProfile(formData);
+      await userApi.updateProfile({
+        ...formData,
+        rollNumber: formData.rollNumber.toUpperCase()
+      });
       toast.success('Profile updated successfully');
       refreshUser();
       setEditing(false);
@@ -48,7 +59,8 @@ const Profile = () => {
     setFormData({
       name: user?.name || '',
       phone: user?.phone || '',
-      department: user?.department || ''
+      department: user?.department || '',
+      rollNumber: user?.rollNumber || ''
     });
     setEditing(false);
   };
@@ -129,7 +141,16 @@ const Profile = () => {
                 <IdCard className="w-4 h-4" />
                 Roll Number
               </Label>
-              <p className="text-white">{user?.rollNumber || 'Not available'}</p>
+              {editing ? (
+                <Input
+                  value={formData.rollNumber}
+                  onChange={(e) => setFormData({ ...formData, rollNumber: e.target.value })}
+                  className="bg-slate-800 border-slate-700 text-white uppercase"
+                  placeholder="e.g. 23MI3PE01"
+                />
+              ) : (
+                <p className="text-white">{user?.rollNumber || 'Not available'}</p>
+              )}
             </div>
 
             {/* Phone */}

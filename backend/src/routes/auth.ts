@@ -84,12 +84,15 @@ router.post('/logout', authenticate, (req, res) => {
 const registerSchema = z.object({
   emailPrefix: z.string().min(1),
   name: z.string().min(1),
-  password: z.string().min(8)
+  password: z.string().min(8),
+  rollNumber: z.string().min(1),
+  department: z.string().min(1),
+  phone: z.string().min(10)
 });
 
 router.post('/register', async (req, res) => {
   try {
-    const { emailPrefix, name, password } = registerSchema.parse(req.body);
+    const { emailPrefix, name, password, rollNumber, department, phone } = registerSchema.parse(req.body);
     const email = `${emailPrefix.toLowerCase().trim()}@kgpian.iitkgp.ac.in`;
 
     // Check if user already exists
@@ -104,8 +107,17 @@ router.post('/register', async (req, res) => {
       });
     }
 
-    // Extract prefix as roll number (if any)
-    const rollNumber = emailPrefix.trim();
+    // Check if roll number already exists
+    const existingRoll = await prisma.user.findUnique({
+      where: { rollNumber: rollNumber.trim() }
+    });
+
+    if (existingRoll) {
+      return res.status(400).json({
+        success: false,
+        error: 'User with this roll number already exists'
+      });
+    }
 
     // Check if admin
     const adminEmails = process.env.ADMIN_EMAILS?.split(',').map(e => e.trim().toLowerCase()) || [];
@@ -120,7 +132,9 @@ router.post('/register', async (req, res) => {
         email,
         name,
         password: hashedPassword,
-        rollNumber,
+        rollNumber: rollNumber.trim(),
+        department: department.trim(),
+        phone: phone.trim(),
         isAdmin,
         isBlocked: false
       }

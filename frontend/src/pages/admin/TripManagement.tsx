@@ -44,6 +44,9 @@ const TripManagement = () => {
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [editingTrip, setEditingTrip] = useState<Trip | null>(null);
   const [deletingTrip, setDeletingTrip] = useState<Trip | null>(null);
+  const [viewingBookingsTrip, setViewingBookingsTrip] = useState<Trip | null>(null);
+  const [tripBookings, setTripBookings] = useState<any[]>([]);
+  const [loadingBookings, setLoadingBookings] = useState(false);
   const [formData, setFormData] = useState({
     title: '',
     description: '',
@@ -124,6 +127,31 @@ const TripManagement = () => {
       fetchTrips();
     } catch (error: any) {
       const message = error.response?.data?.error || `Failed to ${action} booking window`;
+      toast.error(message);
+    }
+  };
+
+  const handleViewBookings = async (trip: Trip) => {
+    setViewingBookingsTrip(trip);
+    setLoadingBookings(true);
+    try {
+      const data = await tripApi.getById(trip.id);
+      setTripBookings((data as any).bookings || []);
+    } catch (error) {
+      console.error('Error fetching bookings:', error);
+      toast.error('Failed to load bookings');
+    } finally {
+      setLoadingBookings(false);
+    }
+  };
+
+  const handleUpdateStatus = async (id: string, status: TripStatus) => {
+    try {
+      await tripApi.updateStatus(id, status);
+      toast.success(`Trip status updated to ${status.replace('_', ' ')}`);
+      fetchTrips();
+    } catch (error: any) {
+      const message = error.response?.data?.error || 'Failed to update trip status';
       toast.error(message);
     }
   };
@@ -263,6 +291,25 @@ const TripManagement = () => {
                 </div>
 
                 <div className="flex items-center gap-2 flex-wrap">
+                  {trip.status !== 'COMPLETED' && trip.status !== 'CANCELLED' && (
+                    <Select
+                      value={trip.status}
+                      onValueChange={(value: TripStatus) => handleUpdateStatus(trip.id, value)}
+                    >
+                      <SelectTrigger className="w-[150px] bg-slate-800 border-slate-700 text-white h-9">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent className="bg-slate-800 border-slate-700">
+                        <SelectItem value="UPCOMING">Upcoming</SelectItem>
+                        <SelectItem value="BOOKING_OPEN">Booking Open</SelectItem>
+                        <SelectItem value="BOOKING_CLOSED">Booking Closed</SelectItem>
+                        <SelectItem value="CAB_ASSIGNED">Cab Assigned</SelectItem>
+                        <SelectItem value="IN_PROGRESS">In Progress</SelectItem>
+                        <SelectItem value="COMPLETED">Completed</SelectItem>
+                        <SelectItem value="CANCELLED">Cancelled</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  )}
                   {trip.status === 'BOOKING_OPEN' && (
                     <Button
                       variant="outline"
@@ -295,6 +342,15 @@ const TripManagement = () => {
                       <Car className="w-4 h-4 mr-1" />
                       Cabs
                     </Link>
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleViewBookings(trip)}
+                    className="border-slate-700 text-slate-300 hover:bg-slate-800"
+                  >
+                    <Users className="w-4 h-4 mr-1" />
+                    Bookings
                   </Button>
                   <Button
                     variant="outline"
@@ -476,6 +532,80 @@ const TripManagement = () => {
               variant="destructive"
             >
               Delete Trip
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* View Bookings Dialog */}
+      <Dialog 
+        open={!!viewingBookingsTrip} 
+        onOpenChange={() => setViewingBookingsTrip(null)}
+      >
+        <DialogContent className="bg-slate-900 border-slate-800 text-white max-w-4xl max-h-[85vh] flex flex-col p-0">
+          <DialogHeader className="p-6 pb-2">
+            <DialogTitle className="text-xl flex items-center gap-2">
+              <Users className="w-5 h-5 text-emerald-500" />
+              Bookings for {viewingBookingsTrip?.title}
+            </DialogTitle>
+            <DialogDescription className="text-slate-400">
+              List of students who have booked this trip
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex-1 overflow-y-auto p-6 pt-0">
+            {loadingBookings ? (
+              <div className="space-y-3">
+                {[1, 2, 3].map(i => (
+                  <Skeleton key={i} className="h-16 w-full bg-slate-800 rounded-lg" />
+                ))}
+              </div>
+            ) : tripBookings.length === 0 ? (
+              <div className="text-center py-12 bg-slate-800/50 rounded-xl border border-dashed border-slate-700">
+                <Users className="w-12 h-12 text-slate-600 mx-auto mb-3" />
+                <p className="text-slate-400">No bookings yet for this trip</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="border-b border-slate-800 text-slate-400 text-sm">
+                      <th className="py-3 px-4 font-medium">Student Name</th>
+                      <th className="py-3 px-4 font-medium">Roll Number</th>
+                      <th className="py-3 px-4 font-medium">Department</th>
+                      <th className="py-3 px-4 font-medium">Phone</th>
+                      <th className="py-3 px-4 font-medium">Email</th>
+                      <th className="py-3 px-4 font-medium text-right">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800">
+                    {tripBookings.map((booking) => (
+                      <tr key={booking.id} className="text-slate-300 hover:bg-slate-800/30 transition-colors">
+                        <td className="py-4 px-4 font-medium text-white">{booking.user?.name}</td>
+                        <td className="py-4 px-4">{booking.user?.rollNumber || 'N/A'}</td>
+                        <td className="py-4 px-4">{booking.user?.department || 'N/A'}</td>
+                        <td className="py-4 px-4">{booking.user?.phone || 'N/A'}</td>
+                        <td className="py-4 px-4 text-xs text-slate-500">{booking.user?.email}</td>
+                        <td className="py-4 px-4 text-right">
+                          <Badge variant="outline" className="bg-emerald-500/10 text-emerald-400 border-emerald-500/30 text-[10px] uppercase tracking-wider">
+                            {booking.status}
+                          </Badge>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          <DialogFooter className="p-4 border-t border-slate-800 bg-slate-900/50">
+            <Button 
+              variant="outline" 
+              onClick={() => setViewingBookingsTrip(null)}
+              className="bg-slate-800 border-slate-700 text-white hover:bg-slate-700"
+            >
+              Close
             </Button>
           </DialogFooter>
         </DialogContent>

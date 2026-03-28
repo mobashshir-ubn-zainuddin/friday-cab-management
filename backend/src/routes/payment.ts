@@ -155,7 +155,7 @@ router.post('/create-order', authenticate, validateBody(createPaymentSchema), as
     // Create Razorpay order
     const order = await createOrder(
       payment.amount,
-      `payment_${payment.id}`,
+      payment.id.substring(0, 30), // Shorten receipt ID to max 40 chars
       {
         paymentId: payment.id,
         userId,

@@ -11,7 +11,8 @@ const router = Router();
 const updateUserSchema = z.object({
   name: z.string().min(2).optional(),
   phone: z.string().regex(/^[0-9]{10}$/).optional(),
-  department: z.string().optional()
+  department: z.string().optional(),
+  rollNumber: z.string().optional()
 });
 
 // Get user dashboard stats
@@ -136,14 +137,32 @@ router.get('/profile', authenticate, async (req: AuthenticatedRequest, res) => {
 // Update user profile
 router.patch('/profile', authenticate, validateBody(updateUserSchema), async (req: AuthenticatedRequest, res) => {
   try {
-    const { name, phone, department } = req.body;
+    const { name, phone, department, rollNumber } = req.body;
+
+    // Check if roll number already exists if provided
+    if (rollNumber) {
+      const existingRoll = await prisma.user.findFirst({
+        where: { 
+          rollNumber: rollNumber.trim(),
+          id: { not: req.user!.id }
+        }
+      });
+
+      if (existingRoll) {
+        return res.status(400).json({
+          success: false,
+          error: 'Roll number already in use by another student'
+        });
+      }
+    }
 
     const updatedUser = await prisma.user.update({
       where: { id: req.user!.id },
       data: {
         ...(name && { name }),
         ...(phone && { phone }),
-        ...(department && { department })
+        ...(department && { department }),
+        ...(rollNumber && { rollNumber: rollNumber.trim() })
       },
       select: {
         id: true,

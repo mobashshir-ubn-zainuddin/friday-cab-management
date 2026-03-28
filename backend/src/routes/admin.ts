@@ -121,7 +121,9 @@ router.get('/trips/:tripId/cabs', authenticate, authorizeAdmin, async (req: Auth
                 id: true,
                 name: true,
                 email: true,
-                rollNumber: true
+                rollNumber: true,
+                phone: true,
+                department: true
               }
             },
             booking: {

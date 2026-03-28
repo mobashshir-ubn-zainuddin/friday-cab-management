@@ -43,13 +43,17 @@ const PaymentControl = () => {
 
   const fetchData = async () => {
     try {
-      const [tripsData, pendingData] = await Promise.all([
-        tripApi.getAll({ status: 'COMPLETED' }),
-        adminApi.getPendingPayments()
-      ]);
+      const tripsData = await tripApi.getAll();
+      const pendingData = await adminApi.getPendingPayments();
       
-      setTrips((tripsData as any).trips.filter((t: any) => t.status === 'COMPLETED' || t.currentBookings > 0));
-      setPendingPayments((pendingData as any).pendingPayments);
+      // Show trips that are COMPLETED or IN_PROGRESS or have bookings
+      setTrips((tripsData as any).trips.filter((t: any) => 
+        t.status === 'COMPLETED' || 
+        t.status === 'IN_PROGRESS' || 
+        t.status === 'CAB_ASSIGNED' ||
+        t.paymentWindowOpen
+      ));
+      setPendingPayments((pendingData as any).pendingPayments || []);
     } catch (error) {
       console.error('Error fetching data:', error);
       toast.error('Failed to load payment data');
@@ -338,7 +342,7 @@ const PaymentControl = () => {
               <div className="p-4 bg-emerald-500/10 rounded-lg border border-emerald-500/20">
                 <p className="text-emerald-400 text-sm">Cost per person</p>
                 <p className="text-2xl font-bold text-emerald-400">
-                  ₹{(parseFloat(totalCost) / selectedTrip.currentBookings).toFixed(2)}
+                  ₹{(parseFloat(totalCost) / (selectedTrip as any).currentBookings).toFixed(2)}
                 </p>
                 <p className="text-emerald-400/70 text-xs mt-1">
                   Divided among {selectedTrip.currentBookings} bookings
@@ -355,15 +359,16 @@ const PaymentControl = () => {
                 setTotalCost('');
               }}
               className="border-slate-700 text-slate-300 hover:bg-slate-800"
+              disabled={openingPayment}
             >
               Cancel
             </Button>
             <Button
               onClick={handleOpenPaymentWindow}
-              disabled={openingPayment || !totalCost}
               className="bg-emerald-500 hover:bg-emerald-600"
+              disabled={openingPayment || !totalCost}
             >
-              {openingPayment ? 'Opening...' : 'Open Payment Window'}
+              {openingPayment ? 'Opening...' : 'Calculate & Open Payment'}
             </Button>
           </DialogFooter>
         </DialogContent>

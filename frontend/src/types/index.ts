@@ -37,6 +37,7 @@ export interface Trip {
     status: string;
   } | null;
   cabs?: Cab[];
+  bookings?: Booking[];
   _count?: {
     bookings: number;
   };

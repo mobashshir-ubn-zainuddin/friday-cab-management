@@ -122,6 +122,7 @@ router.get('/', authenticate, async (req: AuthenticatedRequest, res) => {
 router.get('/:id', authenticate, async (req: AuthenticatedRequest, res) => {
   try {
     const { id } = req.params;
+    const isAdmin = req.user!.isAdmin;
 
     const trip = await prisma.trip.findUnique({
       where: { id },
@@ -136,7 +137,9 @@ router.get('/:id', authenticate, async (req: AuthenticatedRequest, res) => {
                 id: true,
                 name: true,
                 email: true,
-                rollNumber: true
+                rollNumber: true,
+                department: true,
+                phone: true
               }
             },
             cabAssignment: {
@@ -154,7 +157,9 @@ router.get('/:id', authenticate, async (req: AuthenticatedRequest, res) => {
                   select: {
                     id: true,
                     name: true,
-                    rollNumber: true
+                    rollNumber: true,
+                    department: true,
+                    phone: true
                   }
                 }
               }
@@ -179,6 +184,12 @@ router.get('/:id', authenticate, async (req: AuthenticatedRequest, res) => {
       });
     }
 
+    // Filter bookings if not admin
+    let bookings = trip.bookings;
+    if (!isAdmin) {
+      bookings = trip.bookings.filter(b => b.userId === req.user!.id);
+    }
+
     // Check if user has booked this trip
     const userBooking = trip.bookings.find(b => b.userId === req.user!.id);
 
@@ -186,6 +197,7 @@ router.get('/:id', authenticate, async (req: AuthenticatedRequest, res) => {
       success: true,
       data: {
         ...trip,
+        bookings,
         userBooking: userBooking || null
       }
     });

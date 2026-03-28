@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { adminApi, tripApi } from '@/services/api';
+import { adminApi, tripApi, bookingApi } from '@/services/api';
 import type { Trip, Cab, Booking, VehicleType } from '@/types';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -47,6 +47,8 @@ const CabAllocation = () => {
   const [createCabOpen, setCreateCabOpen] = useState(false);
   const [deletingCab, setDeletingCab] = useState<Cab | null>(null);
   const [assigningBooking, setAssigningBooking] = useState<Booking | null>(null);
+  const [viewingAssignment, setViewingAssignment] = useState<any | null>(null);
+  const [markingPresence, setMarkingPresence] = useState(false);
   const [autoAssigning, setAutoAssigning] = useState(false);
 
   const [cabForm, setCabForm] = useState({
@@ -138,6 +140,21 @@ const CabAllocation = () => {
     } catch (error: any) {
       const message = error.response?.data?.error || 'Failed to assign booking';
       toast.error(message);
+    }
+  };
+
+  const handleMarkPresence = async (bookingId: string, attended: boolean) => {
+    setMarkingPresence(true);
+    try {
+      await bookingApi.markAttendance(bookingId, attended);
+      toast.success(`Presence confirmed: ${attended ? 'Present' : 'Absent'}`);
+      setViewingAssignment(null);
+      fetchTripData();
+    } catch (error: any) {
+      const message = error.response?.data?.error || 'Failed to mark attendance';
+      toast.error(message);
+    } finally {
+      setMarkingPresence(false);
     }
   };
 
@@ -267,29 +284,32 @@ const CabAllocation = () => {
                     </div>
                   )}
 
-                  {/* Assigned Passengers */}
-                  {cab.assignments && cab.assignments.length > 0 && (
                     <div className="mt-4">
                       <h4 className="text-sm font-medium text-white mb-2">Passengers</h4>
                       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
                         {cab.assignments.map((assignment) => (
-                          <div 
+                          <button 
                             key={assignment.id} 
-                            className="flex items-center gap-2 p-2 bg-slate-800 rounded-lg"
+                            onClick={() => setViewingAssignment(assignment)}
+                            className={`flex items-center gap-2 p-2 bg-slate-800 rounded-lg hover:bg-slate-700 transition-colors w-full text-left group ${
+                              (assignment.booking as any)?.attended ? 'ring-1 ring-emerald-500/50' : ''
+                            }`}
                           >
-                            <div className="w-6 h-6 bg-emerald-500/20 rounded-full flex items-center justify-center">
-                              <span className="text-xs text-emerald-400">
+                            <div className={`w-6 h-6 rounded-full flex items-center justify-center ${(assignment.booking as any)?.attended ? 'bg-emerald-500' : 'bg-emerald-500/20'}`}>
+                              <span className={`text-xs ${(assignment.booking as any)?.attended ? 'text-white' : 'text-emerald-400'}`}>
                                 {assignment.seatNumber}
                               </span>
                             </div>
-                            <span className="text-sm text-slate-300 truncate">
+                            <span className={`text-sm truncate flex-1 ${(assignment.booking as any)?.attended ? 'text-emerald-400 font-medium' : 'text-slate-300'}`}>
                               {assignment.user?.name}
                             </span>
-                          </div>
+                            {(assignment.booking as any)?.attended && (
+                              <CheckCircle className="w-3 h-3 text-emerald-500" />
+                            )}
+                          </button>
                         ))}
                       </div>
                     </div>
-                  )}
                 </div>
 
                 {/* Actions */}
@@ -498,6 +518,89 @@ const CabAllocation = () => {
               <p className="text-slate-400 text-center py-4">No available cabs</p>
             )}
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Passenger Details & Presence Confirmation Dialog */}
+      <Dialog open={!!viewingAssignment} onOpenChange={() => setViewingAssignment(null)}>
+        <DialogContent className="bg-slate-900 border-slate-800 text-white">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <User className="w-5 h-5 text-emerald-500" />
+              Passenger Details
+            </DialogTitle>
+            <DialogDescription className="text-slate-400">
+              Seat #{viewingAssignment?.seatNumber}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-4">
+            <div className="bg-slate-800/50 p-4 rounded-xl space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-slate-400 text-sm">Full Name</span>
+                <span className="text-white font-medium">{viewingAssignment?.user?.name}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-400 text-sm">Roll Number</span>
+                <span className="text-white font-medium uppercase">{viewingAssignment?.user?.rollNumber || 'N/A'}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-400 text-sm">Email Address</span>
+                <span className="text-white font-medium text-sm">{viewingAssignment?.user?.email}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-400 text-sm">Phone Number</span>
+                <span className="text-white font-medium">{viewingAssignment?.user?.phone || 'N/A'}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-400 text-sm">Department</span>
+                <span className="text-white font-medium">{viewingAssignment?.user?.department || 'N/A'}</span>
+              </div>
+              <div className="flex items-center justify-between pt-2 border-t border-slate-700">
+                <span className="text-slate-400 text-sm">Status</span>
+                <Badge 
+                  variant="outline" 
+                  className={(viewingAssignment?.booking as any)?.attended 
+                    ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30" 
+                    : "bg-amber-500/10 text-amber-400 border-amber-500/30"
+                  }
+                >
+                  {(viewingAssignment?.booking as any)?.attended ? 'Attended' : 'Confirmed'}
+                </Badge>
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter className="flex flex-col sm:flex-row gap-2">
+            {(viewingAssignment?.booking as any)?.attended ? (
+              <Button
+                variant="outline"
+                className="w-full border-red-500/30 text-red-400 hover:bg-red-500/10"
+                onClick={() => handleMarkPresence(viewingAssignment.bookingId, false)}
+                disabled={markingPresence}
+              >
+                <XCircle className="w-4 h-4 mr-2" />
+                Cancel Presence
+              </Button>
+            ) : (
+              <Button
+                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold"
+                onClick={() => handleMarkPresence(viewingAssignment.bookingId, true)}
+                disabled={markingPresence}
+              >
+                <CheckCircle className="w-4 h-4 mr-2" />
+                Confirm Presence
+              </Button>
+            )}
+            <Button
+              variant="outline"
+              onClick={() => setViewingAssignment(null)}
+              className="w-full border-slate-700 text-slate-300 hover:bg-slate-800"
+              disabled={markingPresence}
+            >
+              Close
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

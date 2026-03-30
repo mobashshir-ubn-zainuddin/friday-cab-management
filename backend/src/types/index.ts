@@ -144,3 +144,5 @@ export interface EmailOptions {
 
 // Re-export Prisma enums
 export { VehicleType, TripStatus, BookingStatus, PaymentStatus };
+
+export {};

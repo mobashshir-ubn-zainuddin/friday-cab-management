@@ -19,7 +19,12 @@ declare global {
   }
 }
 
-export interface AuthenticatedRequest extends Request {
+export interface AuthenticatedRequest extends Request<
+  any,   // params
+  any,   // res body
+  any,   // req body
+  any    // query
+> {
   user?: Express.User;
 }
 

@@ -99,6 +99,13 @@ app.use('/api/bookings', bookingRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/admin', adminRoutes);
 
+app.get("/healthz", (req, res) => {
+  res.status(200).json({
+    status: "ok",
+    message: "Server is running"
+  });
+});
+
 // Server startup
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);

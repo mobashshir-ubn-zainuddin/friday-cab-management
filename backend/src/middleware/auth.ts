@@ -65,7 +65,7 @@ export const authenticate = async (
       dbUser = await prisma.user.create({
         data: {
           email,
-          name: user.user_metadata?.full_name || user.name || '',
+          name: user.user_metadata?.full_name || user.user_metadata?.name || '',
           isAdmin,
           isBlocked: false
         }

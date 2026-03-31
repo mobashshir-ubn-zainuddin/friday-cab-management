@@ -13,7 +13,9 @@ const Login = () => {
   const { isAuthenticated } = useAuth();
   const navigate = useNavigate();
   const [emailPrefix, setEmailPrefix] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [otpLoading, setOtpLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
+  const [verifyLoading, setVerifyLoading] = useState(false);
   const [otpSent, setOtpSent] = useState(false);
   const [otp, setOtp] = useState('');
 
@@ -32,7 +34,7 @@ const Login = () => {
 
     const email = `${emailPrefix.toLowerCase().trim()}@kgpian.iitkgp.ac.in`;
 
-    setLoading(true);
+    setOtpLoading(true);
     try {
       const { error } = await supabase.auth.signInWithOtp({
         email,
@@ -49,7 +51,7 @@ const Login = () => {
       console.error('OTP error:', error);
       toast.error(error.message || 'Failed to send OTP');
     } finally {
-      setLoading(false);
+      setOtpLoading(false);
     }
   };
 
@@ -62,7 +64,7 @@ const Login = () => {
 
     const email = `${emailPrefix.toLowerCase().trim()}@kgpian.iitkgp.ac.in`;
 
-    setLoading(true);
+    setVerifyLoading(true);
     try {
       const { error } = await supabase.auth.verifyOtp({
         email,
@@ -78,12 +80,12 @@ const Login = () => {
       console.error('Verify error:', error);
       toast.error(error.message || 'Invalid OTP');
     } finally {
-      setLoading(false);
+      setVerifyLoading(false);
     }
   };
 
   const handleGoogleLogin = async () => {
-    setLoading(true);
+    setGoogleLoading(true);
     try {
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
@@ -98,7 +100,7 @@ const Login = () => {
     } catch (error: any) {
       console.error('Google login error:', error);
       toast.error(error.message || 'Failed to login with Google');
-      setLoading(false);
+      setGoogleLoading(false);
     }
   };
 
@@ -133,13 +135,26 @@ const Login = () => {
                       className="bg-slate-800 border-slate-700 text-white rounded-r-none focus-visible:ring-emerald-500"
                       value={emailPrefix}
                       onChange={(e) => setEmailPrefix(e.target.value)}
-                      disabled={loading}
+                      disabled={otpLoading || googleLoading}
                     />
                     <div className="bg-slate-800 border border-l-0 border-slate-700 text-slate-400 px-3 flex items-center rounded-r-md text-sm font-medium whitespace-nowrap">
                       @kgpian.iitkgp.ac.in
                     </div>
                   </div>
                 </div>
+
+                <Button 
+                  type="submit" 
+                  className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold h-11"
+                  disabled={otpLoading || googleLoading}
+                >
+                  {otpLoading ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <Mail className="mr-2 h-4 w-4" />
+                  )}
+                  SEND OTP
+                </Button>
 
                 <div className="relative py-2">
                   <div className="absolute inset-0 flex items-center">
@@ -155,27 +170,19 @@ const Login = () => {
                   variant="outline"
                   className="w-full bg-slate-800 border-slate-700 text-white hover:bg-slate-700 hover:text-white"
                   onClick={handleGoogleLogin}
-                  disabled={loading}
+                  disabled={otpLoading || googleLoading}
                 >
-                  <svg className="mr-2 h-4 w-4" aria-hidden="true" focusable="false" data-prefix="fab" data-icon="google" role="img" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 488 512">
-                    <path fill="currentColor" d="M488 261.8C488 403.3 391.1 504 248 504 110.8 504 0 393.2 0 256S110.8 8 248 8c66.8 0 123 24.5 166.3 64.9l-67.5 64.9C258.5 52.6 94.3 116.6 94.3 256c0 86.5 69.1 156.6 153.7 156.6 98.2 0 135-70.4 140.8-106.9H248v-85.3h236.1c2.3 12.7 3.9 24.9 3.9 41.4z"></path>
-                  </svg>
+                  {googleLoading ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <svg className="mr-2 h-4 w-4" aria-hidden="true" focusable="false" data-prefix="fab" data-icon="google" role="img" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 488 512">
+                      <path fill="currentColor" d="M488 261.8C488 403.3 391.1 504 248 504 110.8 504 0 393.2 0 256S110.8 8 248 8c66.8 0 123 24.5 166.3 64.9l-67.5 64.9C258.5 52.6 94.3 116.6 94.3 256c0 86.5 69.1 156.6 153.7 156.6 98.2 0 135-70.4 140.8-106.9H248v-85.3h236.1c2.3 12.7 3.9 24.9 3.9 41.4z"></path>
+                    </svg>
+                  )}
                   Google
                 </Button>
               </CardContent>
               <CardFooter className="flex flex-col space-y-4 pt-2">
-                <Button 
-                  type="submit" 
-                  className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold h-11"
-                  disabled={loading}
-                >
-                  {loading ? (
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  ) : (
-                    <Mail className="mr-2 h-4 w-4" />
-                  )}
-                  SEND OTP
-                </Button>
                 <div className="text-center text-sm text-slate-400">
                   By logging in, you agree to our terms
                 </div>
@@ -192,7 +199,7 @@ const Login = () => {
                     className="bg-slate-800 border-slate-700 text-white focus-visible:ring-emerald-500 text-center text-2xl tracking-widest"
                     value={otp}
                     onChange={(e) => setOtp(e.target.value)}
-                    disabled={loading}
+                    disabled={verifyLoading}
                     maxLength={6}
                   />
                   <p className="text-xs text-slate-400 text-center">
@@ -204,9 +211,9 @@ const Login = () => {
                 <Button 
                   type="submit" 
                   className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold h-11"
-                  disabled={loading}
+                  disabled={verifyLoading}
                 >
-                  {loading ? (
+                  {verifyLoading ? (
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                   ) : (
                     'VERIFY OTP'
@@ -217,7 +224,7 @@ const Login = () => {
                   variant="ghost"
                   className="w-full text-slate-400 hover:text-white"
                   onClick={() => setOtpSent(false)}
-                  disabled={loading}
+                  disabled={verifyLoading}
                 >
                   Change Email
                 </Button>

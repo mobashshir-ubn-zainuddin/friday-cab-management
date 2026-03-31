@@ -78,10 +78,8 @@ export const apiClient = {
 
 // Auth API
 export const authApi = {
-  login: (data: any) => apiClient.post<{ token: string; user: any }>('/auth/login', data),
-  register: (data: any) => apiClient.post<{ token: string; user: any }>('/auth/register', data),
+  syncUser: () => apiClient.post<{ user: any }>('/auth/sync-user'),
   getCurrentUser: () => apiClient.get('/auth/me'),
-  refreshToken: () => apiClient.post('/auth/refresh'),
   logout: () => apiClient.post('/auth/logout')
 };
 

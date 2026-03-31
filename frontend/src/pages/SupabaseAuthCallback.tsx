@@ -8,119 +8,56 @@ import { Button } from '@/components/ui/button';
 
 const SupabaseAuthCallback = () => {
   const navigate = useNavigate();
-  const { login } = useAuth();
+  const { refreshUser } = useAuth();
   const [error, setError] = useState<string>('');
   const [loading, setLoading] = useState(true);
-
-  // STRICT validation: Only IITKGP emails allowed
-  const isValidIITKGPEmail = (email: string): boolean => {
-    const lowerEmail = email.toLowerCase().trim();
-    return lowerEmail.endsWith('@kgpian.iitkgp.ac.in');
-  };
 
   useEffect(() => {
     const handleAuthCallback = async () => {
       try {
         setLoading(true);
-
-        // Get the current session from Supabase
         const { data: { session }, error: sessionError } = await supabase.auth.getSession();
 
-        if (sessionError) {
-          console.error('Session error:', sessionError);
-          setError('Authentication failed. Please try again.');
-          setLoading(false);
-          return;
-        }
-
-        let user = session?.user;
-
-        if (!user) {
-          // Check if there's a hash fragment from OAuth redirect
-          const { data: { user: currentUser }, error: userError } = await supabase.auth.getUser();
-
-          if (userError || !currentUser) {
-            console.error('User error:', userError);
-            setError('Authentication failed. Please try again.');
+        if (sessionError) throw sessionError;
+        
+        if (!session) {
+          // If no session, wait a bit for potential hash parsing
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          const { data: { session: retrySession } } = await supabase.auth.getSession();
+          if (!retrySession) {
+            setError('No active session found.');
             setLoading(false);
             return;
           }
-
-          user = currentUser;
         }
 
-        // STRICT: Validate IITKGP email
-        const userEmail = user.email || '';
+        const { data: { session: finalSession } } = await supabase.auth.getSession();
+        const user = finalSession?.user;
 
-        if (!isValidIITKGPEmail(userEmail)) {
-          // Sign out the user immediately
+        if (user && !user.email?.endsWith('@kgpian.iitkgp.ac.in')) {
           await supabase.auth.signOut();
-          setError(`Access Denied: Only @kgpian.iitkgp.ac.in emails are allowed. Your email (${userEmail}) is not authorized.`);
+          setError('Only @kgpian.iitkgp.ac.in emails are allowed.');
           setLoading(false);
           return;
         }
 
-        // Store user in backend database via API
-        await syncUserWithBackend(user);
-
-      } catch (err) {
-        console.error('Auth callback error:', err);
-        setError('An unexpected error occurred. Please try again.');
-        setLoading(false);
-      }
-    };
-
-    const syncUserWithBackend = async (supabaseUser: any) => {
-      try {
-        // Sync user with backend database using Prisma
-        const response = await fetch(`${import.meta.env.VITE_API_URL}/auth/supabase/callback`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            email: supabaseUser.email,
-            name: supabaseUser.user_metadata?.full_name || supabaseUser.user_metadata?.name || supabaseUser.email?.split('@')[0],
-            avatar_url: supabaseUser.user_metadata?.avatar_url,
-            provider: 'google',
-            provider_id: supabaseUser.id
-          })
-        });
-
-        const result = await response.json();
-
-        if (result.success) {
-          const { token, user: userData } = result.data;
-
-          // Login using the AuthContext
-          login(token, userData);
-
-          // Redirect to dashboard
+        // AuthContext handles syncing via onAuthStateChange
+        // We just need to wait a bit and redirect
+        setTimeout(() => {
           navigate('/dashboard', { replace: true });
-        } else {
-          throw new Error(result.error || 'Failed to sync user');
-        }
+        }, 1500);
+
       } catch (err: any) {
-        console.error('Backend sync error:', err);
-
-        // Display the error message from the backend
-        setError(err.message || 'Failed to complete login. Please try again.');
-
-        // Sign out from Supabase since sync failed
-        await supabase.auth.signOut();
+        console.error('Auth callback error:', err);
+        setError(err.message || 'Authentication failed.');
         setLoading(false);
       }
     };
 
     handleAuthCallback();
-  }, [navigate, login]);
+  }, [navigate]);
 
   const handleRetry = () => {
-    navigate('/login');
-  };
-
-  const handleSignOut = async () => {
-    await supabase.auth.signOut();
     navigate('/login');
   };
 
@@ -149,26 +86,13 @@ const SupabaseAuthCallback = () => {
             <Alert variant="destructive" className="bg-red-950/50 border-red-800 text-red-200">
               <AlertDescription>{error}</AlertDescription>
             </Alert>
-            <div className="flex gap-3 justify-center">
-              <Button onClick={handleRetry} variant="outline" className="border-slate-700 text-white hover:bg-slate-800">
-                Try Again
-              </Button>
-              <Button onClick={handleSignOut} className="bg-emerald-600 hover:bg-emerald-700">
-                Sign Out
+            <div className="flex gap-4 justify-center">
+              <Button onClick={handleRetry} className="bg-emerald-600 hover:bg-emerald-700">
+                Back to Login
               </Button>
             </div>
           </>
-        ) : (
-          <>
-            <div className="w-16 h-16 bg-emerald-500 rounded-2xl flex items-center justify-center mx-auto">
-              <Car className="w-8 h-8 text-white" />
-            </div>
-            <div className="space-y-2">
-              <h1 className="text-xl font-semibold text-white">Login Successful!</h1>
-              <p className="text-slate-400">Redirecting you to dashboard...</p>
-            </div>
-          </>
-        )}
+        ) : null}
       </div>
     </div>
   );

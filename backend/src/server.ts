@@ -8,11 +8,8 @@ import helmet from 'helmet';
 import morgan from 'morgan';
 import cookieParser from 'cookie-parser';
 import rateLimit from 'express-rate-limit';
-import passport from 'passport';
-import session from 'express-session';
 
 import { prisma } from './utils/prisma';
-import './config/passport';
 
 // Import routes
 import authRoutes from './routes/auth';
@@ -70,26 +67,6 @@ app.use(cookieParser());
 
 // Logging
 app.use(morgan('dev'));
-
-// Session configuration
-app.use(session({
-  secret: process.env.JWT_SECRET || 'fallback-secret',
-  resave: false,
-  saveUninitialized: false,
-  cookie: {
-    secure: process.env.NODE_ENV === 'production',
-    maxAge: 24 * 60 * 60 * 1000 // 24 hours
-  }
-}));
-
-// Passport initialization
-app.use(passport.initialize());
-app.use(passport.session());
-
-// Health check
-app.get('/health', (req, res) => {
-  res.json({ status: 'OK', timestamp: new Date().toISOString() });
-});
 
 // API Routes
 app.use('/api/auth', authRoutes);

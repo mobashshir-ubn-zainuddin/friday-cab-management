@@ -2,6 +2,8 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import type { ReactNode } from 'react';
 import type { User } from '@/types';
 import { authApi } from '@/services/api';
+import { supabase } from '@/lib/supabase';
+import { useNavigate } from 'react-router-dom';
 
 interface AuthContextType {
   user: User | null;
@@ -9,8 +11,7 @@ interface AuthContextType {
   isLoading: boolean;
   isAdmin: boolean;
   hasPendingPayments: boolean;
-  login: (token: string, userData: User) => void;
-  logout: () => void;
+  logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
 }
 
@@ -19,48 +20,75 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const navigate = useNavigate();
 
   useEffect(() => {
-    // Check for stored token and user on mount
-    const token = localStorage.getItem('token');
-    const storedUser = localStorage.getItem('user');
-    
-    if (token && storedUser) {
-      try {
-        const parsedUser = JSON.parse(storedUser);
-        setUser(parsedUser);
-        // Validate token by fetching current user
-        refreshUser();
-      } catch (error) {
-        console.error('Error parsing stored user:', error);
-        logout();
+    // Listen for auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      console.log('Auth event:', event);
+      if (session) {
+        localStorage.setItem('token', session.access_token);
+        await checkAndSyncUser(session.user);
+      } else {
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        setUser(null);
       }
-    } else {
-      // No token found, we're not loading anymore
       setIsLoading(false);
-      return;
-    }
-    
-    // Add timeout to prevent infinite loading when a token exists
-    const timeout = setTimeout(() => {
+    });
+
+    // Initial session check
+    const initAuth = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session) {
+        localStorage.setItem('token', session.access_token);
+        await checkAndSyncUser(session.user);
+      }
       setIsLoading(false);
-    }, 3000);
-    
-    return () => clearTimeout(timeout);
+    };
+
+    initAuth();
+
+    return () => {
+      subscription.unsubscribe();
+    };
   }, []);
 
-  const login = (token: string, userData: User) => {
-    localStorage.setItem('token', token);
-    localStorage.setItem('user', JSON.stringify(userData));
-    setUser(userData);
+  const checkAndSyncUser = async (supabaseUser: any) => {
+    const email = supabaseUser.email;
+    if (!email?.endsWith('@kgpian.iitkgp.ac.in')) {
+      console.error('Unauthorized domain');
+      await logout();
+      alert('Only @kgpian.iitkgp.ac.in emails are allowed');
+      return;
+    }
+
+    try {
+      // Sync user with backend
+      const response = await authApi.syncUser();
+      const userData = response.user;
+      setUser(userData);
+      localStorage.setItem('user', JSON.stringify(userData));
+    } catch (error) {
+      console.error('Error syncing user:', error);
+      // If sync fails (e.g., user not fully registered), we might still have a partial user
+      // or we might need to redirect to profile to complete registration
+      try {
+        const userData = await authApi.getCurrentUser();
+        setUser(userData as User);
+        localStorage.setItem('user', JSON.stringify(userData));
+      } catch (err) {
+        console.error('Error fetching current user:', err);
+      }
+    }
   };
 
-  const logout = () => {
+  const logout = async () => {
+    await supabase.auth.signOut();
     localStorage.removeItem('token');
     localStorage.removeItem('user');
     setUser(null);
-    // Optionally call logout API
-    authApi.logout().catch(console.error);
+    navigate('/login');
   };
 
   const refreshUser = async () => {
@@ -70,7 +98,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       localStorage.setItem('user', JSON.stringify(userData));
     } catch (error) {
       console.error('Error refreshing user:', error);
-      logout();
     }
   };
 
@@ -80,7 +107,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     isLoading,
     isAdmin: user?.isAdmin || false,
     hasPendingPayments: user?.hasPendingPayments || false,
-    login,
     logout,
     refreshUser
   };

@@ -1,9 +1,9 @@
 import { Request, Response, NextFunction } from 'express';
-import { verifyToken } from '../utils/jwt';
 import { prisma } from '../utils/prisma';
-import { AuthenticatedRequest, JwtPayload } from '../types';
+import { AuthenticatedRequest } from '../types';
+import { supabase } from '../config/supabaseClient';
 
-// Authenticate user with JWT
+// Authenticate user with Supabase Token
 export const authenticate = async (
   req: AuthenticatedRequest,
   res: Response,
@@ -30,37 +30,123 @@ export const authenticate = async (
       return;
     }
 
-    const decoded = verifyToken(token) as JwtPayload;
+    // Verify token with Supabase
+    const { data: { user }, error } = await supabase.auth.getUser(token);
 
-    // Check if user exists
-    const user = await prisma.user.findUnique({
-      where: { id: decoded.userId }
-    });
-
-    if (!user) {
+    if (error || !user) {
       res.status(401).json({
         success: false,
-        error: 'User not found.'
+        error: 'Invalid or expired token.'
       });
       return;
     }
 
-    req.user = user;
+    const email = user.email;
+
+    // 🔒 HARD SECURITY CHECK: Only allow @kgpian.iitkgp.ac.in
+    if (!email?.endsWith('@kgpian.iitkgp.ac.in')) {
+      res.status(403).json({
+        success: false,
+        error: 'Unauthorized domain. Only @kgpian.iitkgp.ac.in emails are allowed.'
+      });
+      return;
+    }
+
+    // Check if user exists in our DB
+    let dbUser = await prisma.user.findUnique({
+      where: { email: email }
+    });
+
+    if (!dbUser) {
+      // Create new user if not exists
+      const adminEmails = process.env.ADMIN_EMAILS?.split(',').map(e => e.trim().toLowerCase()) || [];
+      const isAdmin = adminEmails.includes(email.toLowerCase());
+
+      dbUser = await prisma.user.create({
+        data: {
+          email,
+          name: user.user_metadata?.full_name || user.name || '',
+          isAdmin,
+          isBlocked: false
+        }
+      });
+    }
+
+    if (dbUser.isBlocked) {
+      res.status(403).json({
+        success: false,
+        error: 'Your account has been blocked.'
+      });
+      return;
+    }
+
+    req.user = dbUser;
     next();
   } catch (error) {
-    if (error instanceof Error && error.name === 'TokenExpiredError') {
+    console.error('Authentication error:', error);
+    res.status(401).json({
+      success: false,
+      error: 'Authentication failed.'
+    });
+  }
+};
+
+// Check if user has pending payments
+export const checkPendingPayments = async (
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    if (!req.user) {
       res.status(401).json({
         success: false,
-        error: 'Token expired. Please login again.'
+        error: 'Authentication required'
       });
       return;
     }
 
-    res.status(401).json({
+    const pendingPayments = await prisma.payment.count({
+      where: {
+        userId: req.user.id,
+        status: { in: ['PENDING', 'FAILED'] }
+      }
+    });
+
+    if (pendingPayments > 0) {
+      res.status(403).json({
+        success: false,
+        error: 'You have pending payments. Please clear them before proceeding.',
+        code: 'PENDING_PAYMENTS'
+      });
+      return;
+    }
+
+    next();
+  } catch (error) {
+    console.error('Error checking pending payments:', error);
+    res.status(500).json({
       success: false,
-      error: 'Invalid token.'
+      error: 'Failed to check payment status'
     });
   }
+};
+
+// Check if user is blocked
+export const checkBlockedStatus = (
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+): void => {
+  if (req.user && req.user.isBlocked) {
+    res.status(403).json({
+      success: false,
+      error: 'Your account has been blocked. Please contact support.',
+      code: 'USER_BLOCKED'
+    });
+    return;
+  }
+  next();
 };
 
 // Authorize admin only
@@ -79,7 +165,7 @@ export const authorizeAdmin = (
   next();
 };
 
-// Optional authentication (for public routes that can also work with auth)
+// Optional authentication
 export const optionalAuth = async (
   req: AuthenticatedRequest,
   res: Response,
@@ -100,116 +186,20 @@ export const optionalAuth = async (
       return;
     }
 
-    const decoded = verifyToken(token) as JwtPayload;
+    const { data: { user } } = await supabase.auth.getUser(token);
 
-    const user = await prisma.user.findUnique({
-      where: { id: decoded.userId }
-    });
-
-    if (user) {
-      req.user = user;
-    }
-
-    next();
-  } catch (error) {
-    // Continue without user
-    next();
-  }
-};
-
-// Check if user is blocked from booking
-export const checkBlockedStatus = async (
-  req: AuthenticatedRequest,
-  res: Response,
-  next: NextFunction
-): Promise<void> => {
-  try {
-    if (!req.user) {
-      res.status(401).json({
-        success: false,
-        error: 'Authentication required.'
+    if (user && user.email?.endsWith('@kgpian.iitkgp.ac.in')) {
+      const dbUser = await prisma.user.findUnique({
+        where: { email: user.email }
       });
-      return;
-    }
-
-    // Check if user is blocked
-    if (req.user.isBlocked) {
-      res.status(403).json({
-        success: false,
-        error: 'Your account is blocked from booking. Please contact admin.',
-        code: 'ACCOUNT_BLOCKED'
-      });
-      return;
-    }
-
-    next();
-  } catch (error) {
-    console.error('Error checking blocked status:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Error checking account status.'
-    });
-  }
-};
-
-// Check if user has ANY unpaid payment - blocks booking if 1 or more unpaid
-export const checkPendingPayments = async (
-  req: AuthenticatedRequest,
-  res: Response,
-  next: NextFunction
-): Promise<void> => {
-  try {
-    if (!req.user) {
-      res.status(401).json({
-        success: false,
-        error: 'Authentication required.'
-      });
-      return;
-    }
-
-    // Check if user has ANY unpaid payment (PENDING or FAILED)
-    const unpaidPayment = await prisma.payment.findFirst({
-      where: {
-        userId: req.user.id,
-        status: {
-          in: ['PENDING', 'FAILED']
-        }
-      },
-      include: {
-        trip: {
-          select: {
-            id: true,
-            title: true,
-            date: true
-          }
-        }
+      if (dbUser) {
+        req.user = dbUser;
       }
-    });
-
-    if (unpaidPayment) {
-      res.status(403).json({
-        success: false,
-        error: `You have an unpaid payment of ₹${unpaidPayment.amount} for "${unpaidPayment.trip?.title || 'Previous Trip'}". Please pay your dues before booking a new trip.`,
-        code: 'UNPAID_DUES',
-        data: {
-          unpaidPayment: {
-            id: unpaidPayment.id,
-            amount: unpaidPayment.amount,
-            trip: unpaidPayment.trip,
-            status: unpaidPayment.status
-          }
-        }
-      });
-      return;
     }
-
+    
     next();
   } catch (error) {
-    console.error('Error checking pending payments:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Error checking payment status.'
-    });
+    next();
   }
 };
 

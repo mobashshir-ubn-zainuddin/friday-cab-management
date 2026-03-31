@@ -49,7 +49,7 @@ const Login = () => {
       toast.success('OTP sent to your email');
     } catch (error: any) {
       console.error('OTP error:', error);
-      toast.error(error.message || 'Failed to send OTP');
+      toast.error(error.message || 'Failed to send EMAIL');
     } finally {
       setOtpLoading(false);
     }
@@ -153,7 +153,7 @@ const Login = () => {
                   ) : (
                     <Mail className="mr-2 h-4 w-4" />
                   )}
-                  SEND OTP
+                  SEND EMAIL
                 </Button>
 
                 <div className="relative py-2">

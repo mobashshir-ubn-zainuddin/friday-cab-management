@@ -3,6 +3,7 @@ import crypto from 'crypto';
 
 const RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID || '';
 const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET || '';
+const RAZORPAY_WEBHOOK_SECRET = process.env.RAZORPAY_WEBHOOK_SECRET || '';
 
 // Initialize Razorpay
 export const razorpay = new Razorpay({
@@ -25,6 +26,26 @@ export const createOrder = async (amount: number, receipt: string, notes?: Recor
   } catch (error) {
     console.error('Error creating Razorpay order:', error);
     throw error;
+  }
+};
+
+// Verify Razorpay webhook signature (uses webhook secret from dashboard)
+export const verifyWebhookSignature = (rawBody: Buffer | string, signature: string): boolean => {
+  if (!RAZORPAY_WEBHOOK_SECRET) {
+    console.error('RAZORPAY_WEBHOOK_SECRET is not configured');
+    return false;
+  }
+
+  try {
+    const expectedSignature = crypto
+      .createHmac('sha256', RAZORPAY_WEBHOOK_SECRET)
+      .update(rawBody)
+      .digest('hex');
+
+    return expectedSignature === signature;
+  } catch (error) {
+    console.error('Error verifying webhook signature:', error);
+    return false;
   }
 };
 

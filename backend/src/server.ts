@@ -17,6 +17,7 @@ import userRoutes from './routes/user';
 import tripRoutes from './routes/trip';
 import bookingRoutes from './routes/booking';
 import paymentRoutes from './routes/payment';
+import paymentWebhookRoutes from './routes/paymentWebhook';
 import adminRoutes from './routes/admin';
 import analyticsRoutes from './routes/analytics';
 
@@ -32,7 +33,7 @@ app.use(helmet({
 
 // CORS - Allow all origins in development, restrict to FRONTEND_URL in production
 const allowedOrigins = process.env.NODE_ENV === 'production'
-  ? [FRONTEND_URL, 'https://friday-cab-management-kuchlachati.vercel.app']
+  ? [FRONTEND_URL, 'https://friday-cab-management-kuchlachati.vercel.app', 'https://kuchlachati.iitkgpcabs.in'] 
   : ['http://localhost:5173', 'http://localhost:3000'];
 
 app.use(cors({
@@ -58,6 +59,13 @@ const limiter = rateLimit({
   max: 100, // limit each IP to 100 requests per windowMs
   message: 'Too many requests from this IP, please try again later.'
 });
+// Razorpay webhook requires raw body for signature verification
+app.use(
+  '/api/payments/webhook',
+  express.raw({ type: 'application/json' }),
+  paymentWebhookRoutes
+);
+
 app.use('/api/', limiter);
 
 // Body parsing

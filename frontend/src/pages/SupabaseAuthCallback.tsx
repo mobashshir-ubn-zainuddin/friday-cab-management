@@ -1,14 +1,12 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
-import { useAuth } from '@/contexts/AuthContext';
 import { Car, AlertCircle, Loader2 } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 
 const SupabaseAuthCallback = () => {
   const navigate = useNavigate();
-  const { refreshUser } = useAuth();
   const [error, setError] = useState<string>('');
   const [loading, setLoading] = useState(true);
 
@@ -16,23 +14,27 @@ const SupabaseAuthCallback = () => {
     const handleAuthCallback = async () => {
       try {
         setLoading(true);
+
+        const callbackUrl = window.location.href;
+        const hasCode = callbackUrl.includes('code=');
+
+        if (hasCode) {
+          const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(callbackUrl);
+
+          if (exchangeError) throw exchangeError;
+        }
+
         const { data: { session }, error: sessionError } = await supabase.auth.getSession();
 
         if (sessionError) throw sessionError;
-        
+
         if (!session) {
-          // If no session, wait a bit for potential hash parsing
-          await new Promise(resolve => setTimeout(resolve, 1000));
-          const { data: { session: retrySession } } = await supabase.auth.getSession();
-          if (!retrySession) {
-            setError('No active session found.');
-            setLoading(false);
-            return;
-          }
+          setError('No active session found.');
+          setLoading(false);
+          return;
         }
 
-        const { data: { session: finalSession } } = await supabase.auth.getSession();
-        const user = finalSession?.user;
+        const user = session.user;
 
         if (user && !user.email?.endsWith('@kgpian.iitkgp.ac.in')) {
           await supabase.auth.signOut();
@@ -42,11 +44,7 @@ const SupabaseAuthCallback = () => {
         }
 
         // AuthContext handles syncing via onAuthStateChange
-        // We just need to wait a bit and redirect
-        setTimeout(() => {
-          navigate('/dashboard', { replace: true });
-        }, 1500);
-
+        navigate('/dashboard', { replace: true });
       } catch (err: any) {
         console.error('Auth callback error:', err);
         setError(err.message || 'Authentication failed.');

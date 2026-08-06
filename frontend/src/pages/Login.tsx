@@ -1,23 +1,23 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
-import { Car, Loader2, Mail } from 'lucide-react';
+import { Car, Loader2, Mail, CheckCircle2 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+
+const CALLBACK_URL = `${window.location.origin}/auth/callback`;
 
 const Login = () => {
   const { isAuthenticated } = useAuth();
   const navigate = useNavigate();
   const [emailPrefix, setEmailPrefix] = useState('');
-  const [otpLoading, setOtpLoading] = useState(false);
+  const [emailLoading, setEmailLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
-  const [verifyLoading, setVerifyLoading] = useState(false);
-  const [otpSent, setOtpSent] = useState(false);
-  const [otp, setOtp] = useState('');
+  const [magicLinkSent, setMagicLinkSent] = useState(false);
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -25,7 +25,7 @@ const Login = () => {
     }
   }, [isAuthenticated, navigate]);
 
-  const handleOTPLogin = async (e: React.FormEvent) => {
+  const handleMagicLinkLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!emailPrefix) {
       toast.error('Please enter your email prefix');
@@ -34,53 +34,24 @@ const Login = () => {
 
     const email = `${emailPrefix.toLowerCase().trim()}@kgpian.iitkgp.ac.in`;
 
-    setOtpLoading(true);
+    setEmailLoading(true);
     try {
       const { error } = await supabase.auth.signInWithOtp({
         email,
         options: {
-          emailRedirectTo: window.location.origin,
+          emailRedirectTo: CALLBACK_URL,
         }
       });
 
       if (error) throw error;
 
-      setOtpSent(true);
-      toast.success('OTP sent to your email');
+      setMagicLinkSent(true);
+      toast.success('Check your email for the sign-in link');
     } catch (error: any) {
-      console.error('OTP error:', error);
-      toast.error(error.message || 'Failed to send EMAIL');
+      console.error('Magic link error:', error);
+      toast.error(error.message || 'Failed to send sign-in link');
     } finally {
-      setOtpLoading(false);
-    }
-  };
-
-  const verifyOTP = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!otp) {
-      toast.error('Please enter the OTP');
-      return;
-    }
-
-    const email = `${emailPrefix.toLowerCase().trim()}@kgpian.iitkgp.ac.in`;
-
-    setVerifyLoading(true);
-    try {
-      const { error } = await supabase.auth.verifyOtp({
-        email,
-        token: otp,
-        type: 'magiclink' // Or 'otp' depending on Supabase config, magiclink usually works for email OTP
-      });
-
-      if (error) throw error;
-
-      toast.success('Logged in successfully');
-      navigate('/dashboard');
-    } catch (error: any) {
-      console.error('Verify error:', error);
-      toast.error(error.message || 'Invalid OTP');
-    } finally {
-      setVerifyLoading(false);
+      setEmailLoading(false);
     }
   };
 
@@ -90,9 +61,9 @@ const Login = () => {
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
-          redirectTo: window.location.origin,
+          redirectTo: CALLBACK_URL,
           queryParams: {
-            hd: 'kgpian.iitkgp.ac.in' // Google domain restriction hint
+            hd: 'kgpian.iitkgp.ac.in'
           }
         }
       });
@@ -103,6 +74,8 @@ const Login = () => {
       setGoogleLoading(false);
     }
   };
+
+  const sentEmail = `${emailPrefix.toLowerCase().trim()}@kgpian.iitkgp.ac.in`;
 
   return (
     <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
@@ -116,15 +89,38 @@ const Login = () => {
         </div>
 
         <Card className="bg-slate-900 border-slate-800">
-          <CardHeader>
-            <CardTitle className="text-2xl text-white">Log In</CardTitle>
-            <CardDescription className="text-slate-400">
-              {otpSent ? 'Enter the OTP sent to your email' : 'Enter your institute email prefix'}
-            </CardDescription>
-          </CardHeader>
-          
-          {!otpSent ? (
-            <form onSubmit={handleOTPLogin}>
+          {magicLinkSent ? (
+            <>
+              <CardHeader className="text-center">
+                <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-emerald-500/10">
+                  <CheckCircle2 className="h-8 w-8 text-emerald-500" />
+                </div>
+                <CardTitle className="text-2xl text-white">Check your email</CardTitle>
+                <CardDescription className="text-slate-400">
+                  A secure sign-in link has been sent to{' '}
+                  <span className="font-medium text-slate-200">{sentEmail}</span>.
+                  Click the link to continue.
+                </CardDescription>
+              </CardHeader>
+              <CardFooter className="flex flex-col space-y-4 pt-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="w-full text-slate-400 hover:text-white"
+                  onClick={() => setMagicLinkSent(false)}
+                >
+                  Use a different email
+                </Button>
+              </CardFooter>
+            </>
+          ) : (
+            <form onSubmit={handleMagicLinkLogin}>
+              <CardHeader>
+                <CardTitle className="text-2xl text-white">Log In</CardTitle>
+                <CardDescription className="text-slate-400">
+                  Enter your institute email prefix
+                </CardDescription>
+              </CardHeader>
               <CardContent className="space-y-4">
                 <div className="space-y-2">
                   <Label htmlFor="email" className="text-slate-300">Institute Email</Label>
@@ -135,7 +131,7 @@ const Login = () => {
                       className="bg-slate-800 border-slate-700 text-white rounded-r-none focus-visible:ring-emerald-500"
                       value={emailPrefix}
                       onChange={(e) => setEmailPrefix(e.target.value)}
-                      disabled={otpLoading || googleLoading}
+                      disabled={emailLoading || googleLoading}
                     />
                     <div className="bg-slate-800 border border-l-0 border-slate-700 text-slate-400 px-3 flex items-center rounded-r-md text-sm font-medium whitespace-nowrap">
                       @kgpian.iitkgp.ac.in
@@ -143,12 +139,12 @@ const Login = () => {
                   </div>
                 </div>
 
-                <Button 
-                  type="submit" 
+                <Button
+                  type="submit"
                   className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold h-11"
-                  disabled={otpLoading || googleLoading}
+                  disabled={emailLoading || googleLoading}
                 >
-                  {otpLoading ? (
+                  {emailLoading ? (
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                   ) : (
                     <Mail className="mr-2 h-4 w-4" />
@@ -170,7 +166,7 @@ const Login = () => {
                   variant="outline"
                   className="w-full bg-slate-800 border-slate-700 text-white hover:bg-slate-700 hover:text-white"
                   onClick={handleGoogleLogin}
-                  disabled={otpLoading || googleLoading}
+                  disabled={emailLoading || googleLoading}
                 >
                   {googleLoading ? (
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -186,48 +182,6 @@ const Login = () => {
                 <div className="text-center text-sm text-slate-400">
                   By logging in, you agree to our terms
                 </div>
-              </CardFooter>
-            </form>
-          ) : (
-            <form onSubmit={verifyOTP}>
-              <CardContent className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="otp" className="text-slate-300">OTP Code</Label>
-                  <Input
-                    id="otp"
-                    placeholder="Enter 6-digit code"
-                    className="bg-slate-800 border-slate-700 text-white focus-visible:ring-emerald-500 text-center text-2xl tracking-widest"
-                    value={otp}
-                    onChange={(e) => setOtp(e.target.value)}
-                    disabled={verifyLoading}
-                    maxLength={6}
-                  />
-                  <p className="text-xs text-slate-400 text-center">
-                    OTP sent to {emailPrefix}@kgpian.iitkgp.ac.in
-                  </p>
-                </div>
-              </CardContent>
-              <CardFooter className="flex flex-col space-y-4 pt-2">
-                <Button 
-                  type="submit" 
-                  className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold h-11"
-                  disabled={verifyLoading}
-                >
-                  {verifyLoading ? (
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  ) : (
-                    'VERIFY OTP'
-                  )}
-                </Button>
-                <Button 
-                  type="button" 
-                  variant="ghost"
-                  className="w-full text-slate-400 hover:text-white"
-                  onClick={() => setOtpSent(false)}
-                  disabled={verifyLoading}
-                >
-                  Change Email
-                </Button>
               </CardFooter>
             </form>
           )}

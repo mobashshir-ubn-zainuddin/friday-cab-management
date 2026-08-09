@@ -1,7 +1,7 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from '@/contexts/AuthContext';
 import { Toaster } from '@/components/ui/sonner';
-
+import { Analytics as VercelAnalytics } from '@vercel/analytics/react';
 // Layouts
 import MainLayout from '@/components/layouts/MainLayout';
 import AdminLayout from '@/components/layouts/AdminLayout';
@@ -98,6 +98,7 @@ function App() {
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       <Toaster position="top-right" richColors />
+      <VercelAnalytics />
     </AuthProvider>
   );
 }

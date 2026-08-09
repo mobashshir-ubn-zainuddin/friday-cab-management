@@ -46,13 +46,27 @@ router.post('/signup', validateBody(signupSchema), async (req, res) => {
 
     // Check for existing user by email
     const existingByEmail = await prisma.user.findUnique({
-      where: { email }
+      where: { email },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        phone: true,
+        rollNumber: true,
+        department: true,
+        isAdmin: true,
+        createdAt: true
+      }
     });
 
     if (existingByEmail) {
-      return res.status(409).json({
-        success: false,
-        error: 'An account with this email already exists. Please sign in instead.'
+      return res.status(200).json({
+        success: true,
+        alreadyExisted: true,
+        message: 'An account with this email already exists. A sign-in link has been sent to your registered email.',
+        data: {
+          user: existingByEmail
+        }
       });
     }
 

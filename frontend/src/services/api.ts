@@ -1,5 +1,5 @@
 import axios, { AxiosError } from 'axios';
-import type { AxiosInstance, AxiosRequestConfig } from 'axios';
+import type { AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios';
 import type { ApiResponse } from '@/types';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
@@ -81,8 +81,13 @@ export const authApi = {
   syncUser: () => apiClient.post<{ user: any }>('/auth/sync-user'),
   getCurrentUser: () => apiClient.get('/auth/me'),
   logout: () => apiClient.post('/auth/logout'),
-  signup: (data: { emailPrefix: string; name: string; phone: string; rollNumber: string; department: string }) =>
-    apiClient.post<{ user: any }>('/auth/signup', data)
+  signup: async (data: { emailPrefix: string; name: string; phone: string; rollNumber: string; department: string }) => {
+    const response: AxiosResponse<ApiResponse<{ user: any }>> = await api.post('/auth/signup', data);
+    if (!response.data.success) {
+      throw new Error(response.data.error || 'Request failed');
+    }
+    return response.data;
+  }
 };
 
 // User API

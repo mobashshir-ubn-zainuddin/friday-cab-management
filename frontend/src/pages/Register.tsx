@@ -65,6 +65,7 @@ const Register = () => {
 
   const [registerLoading, setRegisterLoading] = useState(false);
   const [magicLinkSent, setMagicLinkSent] = useState(false);
+  const [alreadyExisted, setAlreadyExisted] = useState(false);
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -81,15 +82,19 @@ const Register = () => {
     }
 
     setRegisterLoading(true);
+    setAlreadyExisted(false);
     try {
-      // Step 1: Save user details to backend database
-      await authApi.signup({
+      // Step 1: Save user details to backend database (or get existing user)
+      const signupResult = await authApi.signup({
         emailPrefix,
         name,
         phone,
         rollNumber,
         department
       });
+
+      const existing = !!signupResult?.alreadyExisted;
+      setAlreadyExisted(existing);
 
       // Step 2: Trigger Supabase magic link to their email
       const email = `${emailPrefix.toLowerCase().trim()}@kgpian.iitkgp.ac.in`;
@@ -101,16 +106,29 @@ const Register = () => {
       });
 
       if (error) {
-        toast.warning(`Profile saved, but: ${error.message}. Please try signing in.`);
+        toast.warning(`We couldn't send the email link: ${error.message}. Please try the Sign In page.`);
         navigate('/login');
         return;
       }
 
       setMagicLinkSent(true);
-      toast.success('Registration complete! Check your email for the sign-in link.');
+      if (existing) {
+        toast.success('An account with this email already exists. A sign-in link has been sent.');
+      } else {
+        toast.success('Registration complete! Check your email for the sign-in link.');
+      }
     } catch (error: any) {
       console.error('Register error:', error);
-      toast.error(error.message || 'Failed to register. Please try again.');
+      const msg = error?.message || 'Failed to register. Please try again.';
+      if (
+        msg.toLowerCase().includes('404') ||
+        msg.toLowerCase().includes('network') ||
+        error?.code === 'ERR_NETWORK'
+      ) {
+        toast.error('Could not reach the server. Please ensure the backend is running.');
+      } else {
+        toast.error(msg);
+      }
     } finally {
       setRegisterLoading(false);
     }
@@ -126,7 +144,7 @@ const Register = () => {
             <Car className="w-10 h-10 text-white" />
           </div>
           <h1 className="text-3xl font-bold text-white tracking-tight">Friday Cab</h1>
-          <p className="text-slate-400 mt-2">Create your account</p>
+          <p className="text-slate-400 mt-2">{alreadyExisted && magicLinkSent ? 'Sign in to your account' : 'Create your account'}</p>
         </div>
 
         <Card className="bg-slate-900 border-slate-800 shadow-xl">
@@ -136,27 +154,55 @@ const Register = () => {
                 <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-emerald-500/10">
                   <CheckCircle2 className="h-8 w-8 text-emerald-500" />
                 </div>
-                <CardTitle className="text-2xl text-white">Welcome aboard!</CardTitle>
-                <CardDescription className="text-slate-400">
-                  Your profile has been saved. A secure sign-in link has been sent to{' '}
-                  <span className="font-medium text-slate-200">{sentEmail}</span>.
-                  Click the link to complete your registration and sign in.
-                </CardDescription>
+                {alreadyExisted ? (
+                  <>
+                    <CardTitle className="text-2xl text-white">Account already exists</CardTitle>
+                    <CardDescription className="text-slate-400">
+                      An account with this email is already registered.
+                      A secure sign-in link has been sent to{' '}
+                      <span className="font-medium text-slate-200">{sentEmail}</span>.
+                      Click the link to sign in, or use a different email to register a new account.
+                    </CardDescription>
+                  </>
+                ) : (
+                  <>
+                    <CardTitle className="text-2xl text-white">Welcome aboard!</CardTitle>
+                    <CardDescription className="text-slate-400">
+                      Your profile has been saved. A secure sign-in link has been sent to{' '}
+                      <span className="font-medium text-slate-200">{sentEmail}</span>.
+                      Click the link to complete your registration and sign in.
+                    </CardDescription>
+                  </>
+                )}
               </CardHeader>
               <CardFooter className="flex flex-col space-y-4 pt-2">
                 <Button
                   type="button"
                   variant="ghost"
                   className="w-full text-slate-400 hover:text-white"
-                  onClick={() => setMagicLinkSent(false)}
+                  onClick={() => {
+                    setMagicLinkSent(false);
+                    setAlreadyExisted(false);
+                  }}
                 >
                   Use a different email
                 </Button>
                 <div className="text-center text-sm text-slate-400">
-                  Already registered?{' '}
-                  <Link to="/login" className="text-emerald-500 hover:text-emerald-400 font-medium">
-                    Sign in
-                  </Link>
+                  {alreadyExisted ? (
+                    <>
+                      Want to sign in directly?{' '}
+                      <Link to="/login" className="text-emerald-500 hover:text-emerald-400 font-medium">
+                        Go to Sign In
+                      </Link>
+                    </>
+                  ) : (
+                    <>
+                      Already have an account?{' '}
+                      <Link to="/login" className="text-emerald-500 hover:text-emerald-400 font-medium">
+                        Sign in
+                      </Link>
+                    </>
+                  )}
                 </div>
               </CardFooter>
             </>

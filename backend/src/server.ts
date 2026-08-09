@@ -22,6 +22,7 @@ import adminRoutes from './routes/admin';
 import analyticsRoutes from './routes/analytics';
 
 const app = express();
+app.set('trust proxy', 1);
 
 const PORT = process.env.PORT || 5000;
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';

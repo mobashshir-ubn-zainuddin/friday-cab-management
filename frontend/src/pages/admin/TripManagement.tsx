@@ -37,6 +37,12 @@ import {
   CreditCard,
   ArrowRight
 } from 'lucide-react';
+import {
+  formatShortDateIST,
+  formatTimeIST,
+  formatForDatetimeLocalIST,
+  formatForDateInputIST
+} from '@/utils/timezone';
 
 const TripManagement = () => {
   const [trips, setTrips] = useState<Trip[]>([]);
@@ -172,26 +178,16 @@ const TripManagement = () => {
 
   const openEditDialog = (trip: Trip) => {
     setEditingTrip(trip);
-    
-    // Helper to format date for datetime-local input (YYYY-MM-DDTHH:mm)
-    const formatForInput = (dateStr: string) => {
-      if (!dateStr) return '';
-      const d = new Date(dateStr);
-      // We need to adjust for timezone offset to keep the same local time in the input
-      const offset = d.getTimezoneOffset() * 60000;
-      const localDate = new Date(d.getTime() - offset);
-      return localDate.toISOString().slice(0, 16);
-    };
 
     setFormData({
       title: trip.title,
       description: trip.description || '',
-      date: trip.date.split('T')[0],
-      bookingStartTime: formatForInput(trip.bookingStartTime),
-      bookingEndTime: formatForInput(trip.bookingEndTime),
-      cancellationDeadline: formatForInput(trip.cancellationDeadline || ''),
-      departureTime: formatForInput(trip.departureTime),
-      returnTime: formatForInput(trip.returnTime || ''),
+      date: formatForDateInputIST(trip.date) || '',
+      bookingStartTime: formatForDatetimeLocalIST(trip.bookingStartTime) || '',
+      bookingEndTime: formatForDatetimeLocalIST(trip.bookingEndTime) || '',
+      cancellationDeadline: formatForDatetimeLocalIST(trip.cancellationDeadline || '') || '',
+      departureTime: formatForDatetimeLocalIST(trip.departureTime) || '',
+      returnTime: formatForDatetimeLocalIST(trip.returnTime || '') || '',
       maxBookings: trip.maxBookings
     });
   };
@@ -214,19 +210,8 @@ const TripManagement = () => {
     );
   };
 
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('en-IN', {
-      month: 'short',
-      day: 'numeric'
-    });
-  };
-
-  const formatTime = (dateString: string) => {
-    return new Date(dateString).toLocaleTimeString('en-IN', {
-      hour: '2-digit',
-      minute: '2-digit'
-    });
-  };
+  const formatDate = (dateString: string) => formatShortDateIST(dateString) || '';
+  const formatTime = (dateString: string) => formatTimeIST(dateString) || '';
 
   if (loading) {
     return (

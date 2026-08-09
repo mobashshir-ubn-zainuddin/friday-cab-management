@@ -22,12 +22,13 @@ import {
   ArrowUpRight,
   ArrowDownRight
 } from 'lucide-react';
+import { istCurrentMonth, istCurrentYear } from '@/utils/timezone';
 
 const Analytics = () => {
   const [analytics, setAnalytics] = useState<AnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [month, setMonth] = useState(new Date().getMonth() + 1);
-  const [year, setYear] = useState(new Date().getFullYear());
+  const [month, setMonth] = useState(istCurrentMonth());
+  const [year, setYear] = useState(istCurrentYear());
 
   useEffect(() => {
     fetchAnalytics();
@@ -49,7 +50,8 @@ const Analytics = () => {
     'July', 'August', 'September', 'October', 'November', 'December'
   ];
 
-  const years = Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i);
+  const currentIY = istCurrentYear();
+  const years = Array.from({ length: 5 }, (_, i) => currentIY - i);
 
   if (loading) {
     return (

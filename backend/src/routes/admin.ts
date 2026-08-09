@@ -4,6 +4,7 @@ import { prisma } from '../utils/prisma';
 import { authenticate, authorizeAdmin } from '../middleware/auth';
 import { validateBody } from '../middleware/validation';
 import { AuthenticatedRequest, VehicleType } from '../types';
+import { istNowStartOfDay, istNowStartOfMonth } from '../utils/timezone';
 
 const router = Router();
 
@@ -25,8 +26,8 @@ const assignCabSchema = z.object({
 // Get admin dashboard stats
 router.get('/dashboard', authenticate, authorizeAdmin, async (req: AuthenticatedRequest, res) => {
   try {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    const today = istNowStartOfDay();
+    const monthStart = istNowStartOfMonth();
 
     const [
       totalUsers,
@@ -72,12 +73,12 @@ router.get('/dashboard', authenticate, authorizeAdmin, async (req: Authenticated
       // Total trips
       prisma.trip.count(),
 
-      // Monthly revenue
+      // Monthly revenue (IST-aware month boundary)
       prisma.payment.aggregate({
         where: {
           status: 'COMPLETED',
           paidAt: {
-            gte: new Date(today.getFullYear(), today.getMonth(), 1)
+            gte: monthStart
           }
         },
         _sum: { amount: true }

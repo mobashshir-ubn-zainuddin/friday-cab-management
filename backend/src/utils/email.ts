@@ -1,10 +1,21 @@
 import nodemailer from 'nodemailer';
 import { EmailOptions } from '../types';
+import { formatInIST } from './timezone';
 
 const SMTP_HOST = process.env.SMTP_HOST || 'smtp.gmail.com';
 const SMTP_PORT = parseInt(process.env.SMTP_PORT || '587');
 const SMTP_USER = process.env.SMTP_USER || '';
 const SMTP_PASS = process.env.SMTP_PASS || '';
+
+// Email-safe time formatting — always in Asia/Kolkata, independent of server TZ.
+export const formatEmailDate = (d: Date | string): string =>
+  formatInIST(d, 'EEEE, dd MMMM yyyy');
+
+export const formatEmailTime = (d: Date | string): string =>
+  formatInIST(d, 'hh:mm a');
+
+export const formatEmailDateTime = (d: Date | string): string =>
+  formatInIST(d, 'EEEE, dd MMMM yyyy hh:mm a');
 
 // Create transporter
 const transporter = nodemailer.createTransport({

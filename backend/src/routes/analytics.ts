@@ -2,21 +2,65 @@ import { Router } from 'express';
 import { prisma } from '../utils/prisma';
 import { authenticate, authorizeAdmin } from '../middleware/auth';
 import { AuthenticatedRequest } from '../types';
+import { fromZonedTime, toZonedTime, format as tzFormat } from 'date-fns-tz';
+import { APP_TIMEZONE } from '../utils/timezone';
 
 const router = Router();
+
+const istMonthStart = (year: number, month: number): Date => {
+  const naive = new Date();
+  naive.setFullYear(year, month - 1, 1);
+  naive.setHours(0, 0, 0, 0);
+  return fromZonedTime(naive, APP_TIMEZONE);
+};
+
+const istMonthEnd = (year: number, month: number): Date => {
+  const naive = new Date();
+  naive.setFullYear(year, month, 0);
+  naive.setHours(23, 59, 59, 999);
+  return fromZonedTime(naive, APP_TIMEZONE);
+};
+
+const istDayStart = (year: number, month: number, day: number): Date => {
+  const naive = new Date();
+  naive.setFullYear(year, month - 1, day);
+  naive.setHours(0, 0, 0, 0);
+  return fromZonedTime(naive, APP_TIMEZONE);
+};
+
+const istDayEnd = (year: number, month: number, day: number): Date => {
+  const naive = new Date();
+  naive.setFullYear(year, month - 1, day);
+  naive.setHours(23, 59, 59, 999);
+  return fromZonedTime(naive, APP_TIMEZONE);
+};
+
+const istDefaultMonth = (): { month: number; year: number } => {
+  const z = toZonedTime(new Date(), APP_TIMEZONE);
+  return { month: z.getMonth() + 1, year: z.getFullYear() };
+};
+
+const istDayCountOfMonth = (year: number, month: number): number => {
+  const naive = new Date();
+  naive.setFullYear(year, month, 0);
+  return naive.getDate();
+};
+
+const formatAsISTDateString = (d: Date): string =>
+  tzFormat(d, 'yyyy-MM-dd', { timeZone: APP_TIMEZONE });
 
 // Get analytics dashboard
 router.get('/', authenticate, authorizeAdmin, async (req: AuthenticatedRequest, res) => {
   try {
     const { month, year } = req.query;
-    
-    const now = new Date();
-    const targetMonth = month ? parseInt(month as string) : now.getMonth() + 1;
-    const targetYear = year ? parseInt(year as string) : now.getFullYear();
 
-    // Date range for the month
-    const startDate = new Date(targetYear, targetMonth - 1, 1);
-    const endDate = new Date(targetYear, targetMonth, 0, 23, 59, 59);
+    const defaults = istDefaultMonth();
+    const targetMonth = month ? parseInt(month as string) : defaults.month;
+    const targetYear = year ? parseInt(year as string) : defaults.year;
+
+    // Date range for the month (IST boundaries converted to UTC)
+    const startDate = istMonthStart(targetYear, targetMonth);
+    const endDate = istMonthEnd(targetYear, targetMonth);
 
     // Get all trips in the month
     const trips = await prisma.trip.findMany({
@@ -55,20 +99,21 @@ router.get('/', authenticate, authorizeAdmin, async (req: AuthenticatedRequest, 
       return sum + (expectedAmount - collectedAmount);
     }, 0);
 
-    // Get daily breakdown
+    // Get daily breakdown (filtering by IST calendar day, output IST date string)
     const dailyStats = [];
-    for (let day = 1; day <= endDate.getDate(); day++) {
-      const dayStart = new Date(targetYear, targetMonth - 1, day);
-      const dayEnd = new Date(targetYear, targetMonth - 1, day, 23, 59, 59);
+    const daysInMonth = istDayCountOfMonth(targetYear, targetMonth);
+    for (let day = 1; day <= daysInMonth; day++) {
+      const dayStart = istDayStart(targetYear, targetMonth, day);
+      const dayEnd = istDayEnd(targetYear, targetMonth, day);
       
       const dayTrips = trips.filter(t => {
-        const tripDate = new Date(t.date);
-        return tripDate >= dayStart && tripDate <= dayEnd;
+        const tripDate = t.date instanceof Date ? t.date : new Date(t.date);
+        return tripDate.getTime() >= dayStart.getTime() && tripDate.getTime() <= dayEnd.getTime();
       });
 
       if (dayTrips.length > 0) {
         dailyStats.push({
-          date: dayStart.toISOString().split('T')[0],
+          date: formatAsISTDateString(dayStart),
           trips: dayTrips.length,
           bookings: dayTrips.reduce((sum, t) => sum + t.bookings.length, 0),
           revenue: dayTrips.reduce((sum, t) => 
@@ -162,10 +207,34 @@ router.get('/', authenticate, authorizeAdmin, async (req: AuthenticatedRequest, 
 router.get('/profit-loss', authenticate, authorizeAdmin, async (req: AuthenticatedRequest, res) => {
   try {
     const { startDate, endDate } = req.query;
-    
-    const start = startDate ? new Date(startDate as string) : new Date(new Date().getFullYear(), 0, 1);
-    const end = endDate ? new Date(endDate as string) : new Date();
-    end.setHours(23, 59, 59);
+
+    let start: Date;
+    let end: Date;
+
+    if (startDate) {
+      const naive = new Date();
+      const parts = (startDate as string).split('-').map(n => parseInt(n));
+      naive.setFullYear(parts[0] || 2024, (parts[1] || 1) - 1, parts[2] || 1);
+      naive.setHours(0, 0, 0, 0);
+      start = fromZonedTime(naive, APP_TIMEZONE);
+    } else {
+      const def = istDefaultMonth();
+      start = istMonthStart(def.year, 1);
+    }
+
+    if (endDate) {
+      const naive = new Date();
+      const parts = (endDate as string).split('-').map(n => parseInt(n));
+      naive.setFullYear(parts[0] || 2024, (parts[1] || 1) - 1, parts[2] || 1);
+      naive.setHours(23, 59, 59, 999);
+      end = fromZonedTime(naive, APP_TIMEZONE);
+    } else {
+      const nowZoned = toZonedTime(new Date(), APP_TIMEZONE);
+      const naive = new Date();
+      naive.setFullYear(nowZoned.getFullYear(), nowZoned.getMonth(), nowZoned.getDate());
+      naive.setHours(23, 59, 59, 999);
+      end = fromZonedTime(naive, APP_TIMEZONE);
+    }
 
     const trips = await prisma.trip.findMany({
       where: {
@@ -221,8 +290,8 @@ router.get('/profit-loss', authenticate, authorizeAdmin, async (req: Authenticat
         report,
         totals,
         period: {
-          start: start.toISOString().split('T')[0],
-          end: end.toISOString().split('T')[0]
+          start: formatAsISTDateString(start),
+          end: formatAsISTDateString(end)
         }
       }
     });
@@ -312,13 +381,18 @@ router.get('/users', authenticate, authorizeAdmin, async (req: AuthenticatedRequ
 router.get('/monthly-comparison', authenticate, authorizeAdmin, async (req: AuthenticatedRequest, res) => {
   try {
     const { year } = req.query;
-    const targetYear = year ? parseInt(year as string) : new Date().getFullYear();
+    const targetYear = year ? parseInt(year as string) : istDefaultMonth().year;
 
     const monthlyData = [];
 
+    const MONTH_NAMES = [
+      'January', 'February', 'March', 'April', 'May', 'June',
+      'July', 'August', 'September', 'October', 'November', 'December'
+    ];
+
     for (let month = 1; month <= 12; month++) {
-      const startDate = new Date(targetYear, month - 1, 1);
-      const endDate = new Date(targetYear, month, 0, 23, 59, 59);
+      const startDate = istMonthStart(targetYear, month);
+      const endDate = istMonthEnd(targetYear, month);
 
       const [trips, payments, expenses] = await Promise.all([
         prisma.trip.count({
@@ -359,7 +433,7 @@ router.get('/monthly-comparison', authenticate, authorizeAdmin, async (req: Auth
 
       monthlyData.push({
         month,
-        monthName: new Date(targetYear, month - 1, 1).toLocaleString('default', { month: 'long' }),
+        monthName: MONTH_NAMES[month - 1],
         trips,
         revenue,
         expense,

@@ -29,6 +29,11 @@ import {
   User,
   Ticket
 } from 'lucide-react';
+import {
+  formatLongDateIST,
+  formatTimeIST,
+  isNowBetween
+} from '@/utils/timezone';
 
 const TripDetails = () => {
   const { id } = useParams<{ id: string }>();
@@ -74,28 +79,13 @@ const TripDetails = () => {
     }
   };
 
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('en-IN', {
-      weekday: 'long',
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric'
-    });
-  };
-
-  const formatTime = (dateString: string) => {
-    return new Date(dateString).toLocaleTimeString('en-IN', {
-      hour: '2-digit',
-      minute: '2-digit'
-    });
-  };
+  const formatDate = (dateString: string) => formatLongDateIST(dateString) || '';
+  const formatTime = (dateString: string) => formatTimeIST(dateString) || '';
 
   const isBookingOpen = (trip: Trip) => {
-    const now = new Date();
     return (
       trip.status === 'BOOKING_OPEN' &&
-      now >= new Date(trip.bookingStartTime) &&
-      now <= new Date(trip.bookingEndTime)
+      isNowBetween(trip.bookingStartTime, trip.bookingEndTime)
     );
   };
 

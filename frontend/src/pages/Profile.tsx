@@ -20,6 +20,7 @@ import {
   CreditCard,
   Ticket
 } from 'lucide-react';
+import { formatLongDateIST } from '@/utils/timezone';
 
 const Profile = () => {
   const { user, refreshUser } = useAuth();
@@ -68,12 +69,7 @@ const Profile = () => {
   };
 
   const formatDate = (dateString?: string) => {
-    if (!dateString) return 'N/A';
-    return new Date(dateString).toLocaleDateString('en-IN', {
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric'
-    });
+    return formatLongDateIST(dateString || '') || 'N/A';
   };
 
   return (

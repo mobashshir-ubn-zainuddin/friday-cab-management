@@ -29,6 +29,11 @@ import {
   ArrowRight,
   Ticket
 } from 'lucide-react';
+import {
+  formatDateIST,
+  formatTimeIST,
+  isBeforeNowInIST
+} from '@/utils/timezone';
 
 const MyBookings = () => {
   const [bookings, setBookings] = useState<Booking[]>([]);
@@ -106,29 +111,16 @@ const MyBookings = () => {
     return steps;
   };
 
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('en-IN', {
-      weekday: 'short',
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric'
-    });
-  };
-
-  const formatTime = (dateString: string) => {
-    return new Date(dateString).toLocaleTimeString('en-IN', {
-      hour: '2-digit',
-      minute: '2-digit'
-    });
-  };
+  const formatDate = (dateString: string) => formatDateIST(dateString) || '';
+  const formatTime = (dateString: string) => formatTimeIST(dateString) || '';
 
   const canCancel = (booking: Booking) => {
     if (booking.status !== 'CONFIRMED') return false;
     if (booking.trip.status === 'COMPLETED') return false;
     if (booking.trip.cancellationDeadline) {
-      return new Date() < new Date(booking.trip.cancellationDeadline);
+      return isBeforeNowInIST(booking.trip.cancellationDeadline) === false;
     }
-    return new Date() < new Date(booking.trip.departureTime);
+    return isBeforeNowInIST(booking.trip.departureTime) === false;
   };
 
   if (loading) {

@@ -28,6 +28,7 @@ import {
   LockOpen,
   Users
 } from 'lucide-react';
+import { formatDateIST, formatDateTimeIST } from '@/utils/timezone';
 
 const PaymentControl = () => {
   const [trips, setTrips] = useState<Trip[]>([]);
@@ -93,9 +94,14 @@ const PaymentControl = () => {
 
   const handleExportReport = async () => {
     try {
-      const data = await paymentApi.exportReport();
-      // Convert to CSV and download
-      const csv = convertToCSV(data);
+      const rawData = await paymentApi.exportReport();
+      const data = (rawData || []) as any[];
+      const formattedData = data.map(row => ({
+        ...row,
+        'Trip Date': row['Trip Date'] ? formatDateIST(row['Trip Date']) : '',
+        'Paid At': row['Paid At'] ? formatDateTimeIST(row['Paid At']) : ''
+      }));
+      const csv = convertToCSV(formattedData);
       downloadCSV(csv, 'payments-report.csv');
       toast.success('Report downloaded successfully');
     } catch (error) {
@@ -105,9 +111,16 @@ const PaymentControl = () => {
   };
 
   const convertToCSV = (data: any[]) => {
-    if (data.length === 0) return '';
+    if (!Array.isArray(data) || data.length === 0) return '';
     const headers = Object.keys(data[0]);
-    const rows = data.map(row => headers.map(h => row[h]).join(','));
+    const escapeCell = (val: any) => {
+      const s = val === null || val === undefined ? '' : String(val);
+      if (s.includes(',') || s.includes('"') || s.includes('\n')) {
+        return '"' + s.replace(/"/g, '""') + '"';
+      }
+      return s;
+    };
+    const rows = data.map(row => headers.map(h => escapeCell(row[h])).join(','));
     return [headers.join(','), ...rows].join('\n');
   };
 
@@ -121,13 +134,7 @@ const PaymentControl = () => {
     window.URL.revokeObjectURL(url);
   };
 
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('en-IN', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric'
-    });
-  };
+  const formatDate = (dateString: string) => formatDateIST(dateString) || '';
 
   const completedPayments = pendingPayments.filter(p => p.status === 'COMPLETED');
   const totalPending = pendingPayments

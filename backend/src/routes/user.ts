@@ -47,13 +47,13 @@ router.get('/dashboard', authenticate, async (req: AuthenticatedRequest, res) =>
       }
     });
 
-    // Get upcoming trips
+    // Get upcoming trips (business-date aware: any trip not yet departed, using absolute instant comparison)
     const upcomingTrips = await prisma.booking.count({
       where: {
         userId,
         status: 'CONFIRMED',
         trip: {
-          date: { gte: new Date() }
+          departureTime: { gte: new Date() }
         }
       }
     });

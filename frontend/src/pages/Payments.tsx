@@ -16,6 +16,7 @@ import {
   ArrowRight,
   Receipt
 } from 'lucide-react';
+import { formatDateIST } from '@/utils/timezone';
 
 // Razorpay script loader
 const loadRazorpayScript = (): Promise<boolean> => {
@@ -156,11 +157,7 @@ const Payments = () => {
 
   const formatDate = (dateString?: string) => {
     if (!dateString) return 'N/A';
-    return new Date(dateString).toLocaleDateString('en-IN', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric'
-    });
+    return formatDateIST(dateString) || 'N/A';
   };
 
   const pendingPayments = payments.filter(p => p.status === 'PENDING');

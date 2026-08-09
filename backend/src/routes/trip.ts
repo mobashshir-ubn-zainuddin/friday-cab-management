@@ -4,24 +4,155 @@ import { prisma } from '../utils/prisma';
 import { authenticate, authorizeAdmin } from '../middleware/auth';
 import { validateBody } from '../middleware/validation';
 import { AuthenticatedRequest, TripStatus } from '../types';
-import { sendTripNotification } from '../utils/email';
+import {
+  sendTripNotification,
+  formatEmailDate,
+  formatEmailTime,
+  formatEmailDateTime
+} from '../utils/email';
+import {
+  APP_TIMEZONE,
+  istToUtcDate,
+  istDateToUtcMidnight,
+  formatDateIST,
+  formatLongDateIST,
+  formatTimeIST,
+  formatDateTimeIST,
+  formatForDatetimeLocalIST,
+  isInvalidDate
+} from '../utils/timezone';
 
 const router = Router();
+
+const DATETIME_INPUT_REGEX = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?(\.\d+)?$/;
+const DATE_INPUT_REGEX = /^\d{4}-\d{2}-\d{2}$/;
+
+const parseIST = (input: string | undefined | null): Date | null => {
+  if (!input) return null;
+  const s = input.trim();
+  if (!s) return null;
+  const naive = DATETIME_INPUT_REGEX.test(s)
+    ? s
+    : DATE_INPUT_REGEX.test(s)
+    ? `${s}T00:00:00`
+    : null;
+  if (naive) {
+    const d = istToUtcDate(naive);
+    return isInvalidDate(d) ? null : d;
+  }
+  const d = new Date(s);
+  return isInvalidDate(d) ? null : d;
+};
+
+const isIstTimeValid = (val: string): boolean => {
+  if (!val) return true;
+  const s = val.trim();
+  if (!s) return true;
+  if (DATETIME_INPUT_REGEX.test(s) || DATE_INPUT_REGEX.test(s)) {
+    return !isInvalidDate(istToUtcDate(
+      DATETIME_INPUT_REGEX.test(s) ? s : `${s}T00:00:00`
+    ));
+  }
+  return !isNaN(Date.parse(s));
+};
+
+const istTimeFieldRefine = (message: string) =>
+  z.string().refine((val) => isIstTimeValid(val), { message });
 
 // Validation schemas
 const createTripSchema = z.object({
   title: z.string().min(3, 'Title must be at least 3 characters'),
   description: z.string().optional(),
-  date: z.string().refine((val) => !isNaN(Date.parse(val)), { message: "Invalid date format" }),
-  bookingStartTime: z.string().refine((val) => !isNaN(Date.parse(val)), { message: "Invalid booking start time" }),
-  bookingEndTime: z.string().refine((val) => !isNaN(Date.parse(val)), { message: "Invalid booking end time" }),
-  cancellationDeadline: z.string().optional().refine((val) => !val || !isNaN(Date.parse(val)), { message: "Invalid cancellation deadline" }),
-  departureTime: z.string().refine((val) => !isNaN(Date.parse(val)), { message: "Invalid departure time" }),
-  returnTime: z.string().optional().refine((val) => !val || !isNaN(Date.parse(val)), { message: "Invalid return time" }),
+  date: z.string().refine((val) => DATE_INPUT_REGEX.test(val) || !isNaN(Date.parse(val)), {
+    message: 'Invalid date format (use YYYY-MM-DD)'
+  }),
+  bookingStartTime: istTimeFieldRefine('Invalid booking start time'),
+  bookingEndTime: istTimeFieldRefine('Invalid booking end time'),
+  cancellationDeadline: z.string().optional().pipe(z.string().or(z.literal(''))).optional().refine(
+    (val) => !val || isIstTimeValid(val),
+    { message: 'Invalid cancellation deadline' }
+  ),
+  departureTime: istTimeFieldRefine('Invalid departure time'),
+  returnTime: z.string().optional().pipe(z.string().or(z.literal(''))).optional().refine(
+    (val) => !val || isIstTimeValid(val),
+    { message: 'Invalid return time' }
+  ),
   maxBookings: z.number().int().positive().optional()
+}).superRefine((data, ctx) => {
+  const bookingStart = parseIST(data.bookingStartTime);
+  const bookingEnd = parseIST(data.bookingEndTime);
+  const cancel = parseIST(data.cancellationDeadline);
+  const depart = parseIST(data.departureTime);
+  const returnT = parseIST(data.returnTime);
+
+  if (bookingStart && bookingEnd && bookingStart.getTime() >= bookingEnd.getTime()) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['bookingEndTime'], message: 'Booking end must be after booking start' });
+  }
+  if (cancel && bookingEnd && cancel.getTime() < bookingEnd.getTime()) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['cancellationDeadline'], message: 'Cancellation deadline must be at or after booking close' });
+  }
+  if (cancel && depart && cancel.getTime() > depart.getTime()) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['cancellationDeadline'], message: 'Cancellation deadline must be before departure' });
+  }
+  if (bookingStart && depart && bookingStart.getTime() >= depart.getTime()) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['departureTime'], message: 'Departure must be after booking opens' });
+  }
+  if (returnT && depart && returnT.getTime() <= depart.getTime()) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['returnTime'], message: 'Return must be after departure' });
+  }
 });
 
-const updateTripSchema = createTripSchema.partial();
+const updateTripSchema = z.object({
+  title: z.string().min(3, 'Title must be at least 3 characters').optional(),
+  description: z.string().optional(),
+  date: z.string().optional().refine(
+    (val) => val === undefined || DATE_INPUT_REGEX.test(val) || !isNaN(Date.parse(val)),
+    { message: 'Invalid date format (use YYYY-MM-DD)' }
+  ),
+  bookingStartTime: z.string().optional().refine(
+    (val) => val === undefined || isIstTimeValid(val),
+    { message: 'Invalid booking start time' }
+  ),
+  bookingEndTime: z.string().optional().refine(
+    (val) => val === undefined || isIstTimeValid(val),
+    { message: 'Invalid booking end time' }
+  ),
+  cancellationDeadline: z.string().optional().refine(
+    (val) => val === undefined || val === '' || val === null || isIstTimeValid(val),
+    { message: 'Invalid cancellation deadline' }
+  ),
+  departureTime: z.string().optional().refine(
+    (val) => val === undefined || isIstTimeValid(val),
+    { message: 'Invalid departure time' }
+  ),
+  returnTime: z.string().optional().refine(
+    (val) => val === undefined || val === '' || val === null || isIstTimeValid(val),
+    { message: 'Invalid return time' }
+  ),
+  maxBookings: z.number().int().positive().optional()
+}).superRefine((data, ctx) => {
+  const bookingStart = parseIST(data.bookingStartTime);
+  const bookingEnd = parseIST(data.bookingEndTime);
+  const cancel = data.cancellationDeadline === '' || data.cancellationDeadline === null ? null : parseIST(data.cancellationDeadline);
+  const depart = parseIST(data.departureTime);
+  const returnT = data.returnTime === '' || data.returnTime === null ? null : parseIST(data.returnTime);
+
+  if (bookingStart && bookingEnd && bookingStart.getTime() >= bookingEnd.getTime()) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['bookingEndTime'], message: 'Booking end must be after booking start' });
+  }
+  if (cancel && bookingEnd && cancel.getTime() < bookingEnd.getTime()) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['cancellationDeadline'], message: 'Cancellation deadline must be at or after booking close' });
+  }
+  if (cancel && depart && cancel.getTime() > depart.getTime()) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['cancellationDeadline'], message: 'Cancellation deadline must be before departure' });
+  }
+  if (bookingStart && depart && bookingStart.getTime() >= depart.getTime()) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['departureTime'], message: 'Departure must be after booking opens' });
+  }
+  if (returnT && depart && returnT.getTime() <= depart.getTime()) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['returnTime'], message: 'Return must be after departure' });
+  }
+});
 
 // Get all trips (with filters)
 router.get('/', authenticate, async (req: AuthenticatedRequest, res) => {
@@ -46,6 +177,7 @@ router.get('/', authenticate, async (req: AuthenticatedRequest, res) => {
     
     if (upcoming === 'true') {
       // Show trips where booking window is currently open OR departure is in the future
+      // departureTime is stored as correct UTC instant; Date.now() is also UTC absolute — so this is correct.
       where.OR = [
         { status: 'BOOKING_OPEN' },
         { departureTime: { gte: new Date() } }
@@ -225,16 +357,27 @@ router.post('/', authenticate, authorizeAdmin, validateBody(createTripSchema), a
       maxBookings
     } = req.body;
 
+    const dateOnly = typeof date === 'string' && DATE_INPUT_REGEX.test(date.trim()) ? date.trim() : null;
+    const dateUtc = dateOnly
+      ? istDateToUtcMidnight(dateOnly)
+      : (date ? parseIST(date) : null) as any;
+
+    const bookingStartUtc = parseIST(bookingStartTime) as Date;
+    const bookingEndUtc = parseIST(bookingEndTime) as Date;
+    const cancelUtc = cancellationDeadline ? parseIST(cancellationDeadline) : null;
+    const departUtc = parseIST(departureTime) as Date;
+    const returnUtc = returnTime ? parseIST(returnTime) : null;
+
     const trip = await prisma.trip.create({
       data: {
         title,
         description,
-        date: new Date(date),
-        bookingStartTime: new Date(bookingStartTime),
-        bookingEndTime: new Date(bookingEndTime),
-        cancellationDeadline: cancellationDeadline ? new Date(cancellationDeadline) : null,
-        departureTime: new Date(departureTime),
-        returnTime: returnTime ? new Date(returnTime) : null,
+        date: dateUtc ?? undefined,
+        bookingStartTime: bookingStartUtc,
+        bookingEndTime: bookingEndUtc,
+        cancellationDeadline: cancelUtc,
+        departureTime: departUtc,
+        returnTime: returnUtc,
         maxBookings: maxBookings || 100,
         status: 'UPCOMING',
         createdBy: req.user!.id
@@ -247,13 +390,13 @@ router.post('/', authenticate, authorizeAdmin, validateBody(createTripSchema), a
       select: { email: true }
     });
 
-    const emailPromises = users.map(user => 
+    const emailPromises = users.map(user =>
       sendTripNotification(user.email, {
         title: trip.title,
-        date: new Date(trip.date).toLocaleDateString('en-IN'),
-        departureTime: new Date(trip.departureTime).toLocaleTimeString('en-IN'),
-        bookingStartTime: new Date(trip.bookingStartTime).toLocaleString('en-IN'),
-        bookingEndTime: new Date(trip.bookingEndTime).toLocaleString('en-IN')
+        date: formatEmailDate(trip.date),
+        departureTime: formatEmailTime(trip.departureTime),
+        bookingStartTime: formatEmailDateTime(trip.bookingStartTime),
+        bookingEndTime: formatEmailDateTime(trip.bookingEndTime)
       })
     );
 
@@ -283,7 +426,6 @@ router.patch('/:id', authenticate, authorizeAdmin, validateBody(updateTripSchema
     const { id } = req.params;
     const updateData: any = {};
 
-    // Only allow updating certain fields based on trip status
     const trip = await prisma.trip.findUnique({
       where: { id },
       select: { status: true }
@@ -296,26 +438,32 @@ router.patch('/:id', authenticate, authorizeAdmin, validateBody(updateTripSchema
       });
     }
 
-    const fields = ['title', 'description', 'date', 'bookingStartTime', 'bookingEndTime', 
-                    'cancellationDeadline', 'departureTime', 'returnTime', 'maxBookings'];
-    
-    fields.forEach(field => {
-      if (req.body[field] !== undefined) {
-        if (field.includes('Time') || field === 'date' || field === 'cancellationDeadline') {
-          // Only create Date if value is provided and valid
-          if (req.body[field]) {
-            const parsedDate = new Date(req.body[field]);
-            if (!isNaN(parsedDate.getTime())) {
-              updateData[field] = parsedDate;
-            }
-          } else {
-            updateData[field] = null;
-          }
-        } else {
-          updateData[field] = req.body[field];
-        }
+    if (req.body.title !== undefined) updateData.title = req.body.title;
+    if (req.body.description !== undefined) updateData.description = req.body.description;
+    if (req.body.maxBookings !== undefined) updateData.maxBookings = req.body.maxBookings;
+
+    if (req.body.date !== undefined) {
+      const d: any = req.body.date;
+      if (d && typeof d === 'string') {
+        const trimmed = d.trim();
+        const dateOnly = DATE_INPUT_REGEX.test(trimmed);
+        updateData.date = dateOnly ? istDateToUtcMidnight(trimmed) : parseIST(trimmed);
+      } else if (!d) {
+        updateData.date = null;
       }
-    });
+    }
+
+    const timeFields = ['bookingStartTime', 'bookingEndTime', 'cancellationDeadline', 'departureTime', 'returnTime'];
+    for (const f of timeFields) {
+      if (req.body[f] === undefined) continue;
+      const raw: any = req.body[f];
+      if (raw === '' || raw === null) {
+        updateData[f] = null;
+      } else if (typeof raw === 'string') {
+        const parsed = parseIST(raw.trim());
+        if (parsed) updateData[f] = parsed;
+      }
+    }
 
     const updatedTrip = await prisma.trip.update({
       where: { id },
@@ -327,11 +475,11 @@ router.patch('/:id', authenticate, authorizeAdmin, validateBody(updateTripSchema
       data: updatedTrip,
       message: 'Trip updated successfully'
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error updating trip:', error);
     res.status(500).json({
       success: false,
-      error: 'Failed to update trip'
+      error: error.message || 'Failed to update trip'
     });
   }
 });

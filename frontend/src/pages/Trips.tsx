@@ -27,6 +27,13 @@ import {
   ArrowRight,
   Search
 } from 'lucide-react';
+import {
+  formatLongDateIST,
+  formatTimeIST,
+  isBeforeNowInIST,
+  isAfterNowInIST,
+  isNowBetween
+} from '@/utils/timezone';
 
 const Trips = () => {
   const { hasPendingPayments } = useAuth();
@@ -97,39 +104,14 @@ const Trips = () => {
   };
 
   const isBookingOpen = (trip: Trip) => {
-    const now = new Date();
-    const startTime = new Date(trip.bookingStartTime);
-    const endTime = new Date(trip.bookingEndTime);
-    
-    // Debug logs to see what's happening
-    console.log('Trip:', trip.title);
-    console.log('Now:', now.toISOString());
-    console.log('Start:', startTime.toISOString());
-    console.log('End:', endTime.toISOString());
-    console.log('Status:', trip.status);
-
     return (
       (trip.status === 'BOOKING_OPEN' || trip.status === 'UPCOMING') &&
-      now >= startTime &&
-      now <= endTime
+      isNowBetween(trip.bookingStartTime, trip.bookingEndTime)
     );
   };
 
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('en-IN', {
-      weekday: 'long',
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric'
-    });
-  };
-
-  const formatTime = (dateString: string) => {
-    return new Date(dateString).toLocaleTimeString('en-IN', {
-      hour: '2-digit',
-      minute: '2-digit'
-    });
-  };
+  const formatDate = (dateString: string) => formatLongDateIST(dateString) || '';
+  const formatTime = (dateString: string) => formatTimeIST(dateString) || '';
 
   if (loading) {
     return (
@@ -255,14 +237,14 @@ const Trips = () => {
                       </Button>
                     ) : (
                       <div className="flex flex-col gap-1">
-                        <Button 
-                          disabled 
-                          variant="outline" 
+                        <Button
+                          disabled
+                          variant="outline"
                           className="border-slate-700 text-slate-500 disabled:opacity-100"
                         >
-                          {new Date() < new Date(trip.bookingStartTime) ? 'Booking Not Started' : 'Booking Closed'}
+                          {isAfterNowInIST(trip.bookingStartTime) ? 'Booking Not Started' : 'Booking Closed'}
                         </Button>
-                        {new Date() < new Date(trip.bookingStartTime) && (
+                        {isAfterNowInIST(trip.bookingStartTime) && (
                           <p className="text-[10px] text-slate-500 text-center">
                             Opens: {formatTime(trip.bookingStartTime)}
                           </p>

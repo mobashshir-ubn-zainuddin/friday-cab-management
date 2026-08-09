@@ -28,6 +28,7 @@ import {
   ChevronLeft,
   ChevronRight
 } from 'lucide-react';
+import { formatDateIST } from '@/utils/timezone';
 
 const UserManagement = () => {
   const [users, setUsers] = useState<User[]>([]);
@@ -90,12 +91,7 @@ const UserManagement = () => {
   };
 
   const formatDate = (dateString?: string) => {
-    if (!dateString) return 'N/A';
-    return new Date(dateString).toLocaleDateString('en-IN', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric'
-    });
+    return formatDateIST(dateString || '') || 'N/A';
   };
 
   if (loading) {

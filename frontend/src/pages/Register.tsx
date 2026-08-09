@@ -1,13 +1,70 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
-import { Car, Mail } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { toast } from 'sonner';
+import { Car, CheckCircle2, Loader2, Mail, UserPlus } from 'lucide-react';
+import { authApi } from '@/services/api';
+import { supabase } from '@/lib/supabase';
+
+const CALLBACK_URL = `${window.location.origin}/auth/callback`;
+
+const DEPARTMENTS = [
+  'Aerospace Engineering',
+  'Agricultural and Food Engineering',
+  'Architecture and Regional Planning',
+  'Biotechnology',
+  'Chemical Engineering',
+  'Chemistry',
+  'Civil Engineering',
+  'Computer Science and Engineering',
+  'Electrical Engineering',
+  'Electronics and Electrical Communication Engineering',
+  'Energy Science and Engineering',
+  'Environmental Science and Engineering',
+  'Geology and Geophysics',
+  'Humanities and Social Sciences',
+  'Industrial and Systems Engineering',
+  'Instrumentation Engineering',
+  'Management Studies',
+  'Manufacturing Science and Engineering',
+  'Mathematics',
+  'Mechanical Engineering',
+  'Metallurgical and Materials Engineering',
+  'Mining Engineering',
+  'Ocean Engineering and Naval Architecture',
+  'Physics',
+  'Rajiv Gandhi School of Intellectual Property Law',
+  'School of Bio-Science',
+  'School of Education',
+  'School of Medical Science and Technology',
+  'Vinod Gupta School of Management',
+  'Water Resources Engineering',
+  'Other'
+];
 
 const Register = () => {
   const { isAuthenticated } = useAuth();
   const navigate = useNavigate();
+
+  const [emailPrefix, setEmailPrefix] = useState('');
+  const [name, setName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [rollNumber, setRollNumber] = useState('');
+  const [department, setDepartment] = useState('');
+
+  const [registerLoading, setRegisterLoading] = useState(false);
+  const [magicLinkSent, setMagicLinkSent] = useState(false);
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -15,53 +72,206 @@ const Register = () => {
     }
   }, [isAuthenticated, navigate]);
 
+  const handleRegister = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (!emailPrefix || !name || !phone || !rollNumber || !department) {
+      toast.error('Please fill in all fields');
+      return;
+    }
+
+    setRegisterLoading(true);
+    try {
+      // Step 1: Save user details to backend database
+      await authApi.signup({
+        emailPrefix,
+        name,
+        phone,
+        rollNumber,
+        department
+      });
+
+      // Step 2: Trigger Supabase magic link to their email
+      const email = `${emailPrefix.toLowerCase().trim()}@kgpian.iitkgp.ac.in`;
+      const { error } = await supabase.auth.signInWithOtp({
+        email,
+        options: {
+          emailRedirectTo: CALLBACK_URL,
+        }
+      });
+
+      if (error) {
+        toast.warning(`Profile saved, but: ${error.message}. Please try signing in.`);
+        navigate('/login');
+        return;
+      }
+
+      setMagicLinkSent(true);
+      toast.success('Registration complete! Check your email for the sign-in link.');
+    } catch (error: any) {
+      console.error('Register error:', error);
+      toast.error(error.message || 'Failed to register. Please try again.');
+    } finally {
+      setRegisterLoading(false);
+    }
+  };
+
+  const sentEmail = `${emailPrefix.toLowerCase().trim()}@kgpian.iitkgp.ac.in`;
+
   return (
     <div className="min-h-screen bg-slate-950 flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
       <div className="w-full max-w-md space-y-8">
-        <div className="text-center">
+        <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center w-16 h-16 bg-emerald-500 rounded-2xl mb-4">
             <Car className="w-10 h-10 text-white" />
           </div>
           <h1 className="text-3xl font-bold text-white tracking-tight">Friday Cab</h1>
-          <p className="text-slate-400 mt-2">Registration is now simplified</p>
+          <p className="text-slate-400 mt-2">Create your account</p>
         </div>
 
         <Card className="bg-slate-900 border-slate-800 shadow-xl">
-          <CardHeader className="space-y-1 text-center">
-            <CardTitle className="text-2xl text-white">Simplified Access</CardTitle>
-            <CardDescription className="text-slate-400">
-              We now use Supabase for secure, passwordless authentication.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-6 text-center text-slate-300">
-            <p>
-              You no longer need to fill out a long registration form. 
-              Just use your institute email to log in directly via OTP or Google.
-            </p>
-            <div className="bg-slate-800/50 p-4 rounded-lg border border-slate-700 text-sm text-left space-y-2">
-              <p className="font-medium text-emerald-400">How it works:</p>
-              <ul className="list-disc list-inside space-y-1">
-                <li>Go to the login page</li>
-                <li>Enter your @kgpian.iitkgp.ac.in email</li>
-                <li>Verify via OTP sent to your email or use Google</li>
-                <li>Your profile will be created automatically!</li>
-              </ul>
-            </div>
-          </CardContent>
-          <CardFooter className="flex flex-col space-y-4">
-            <Button asChild className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold h-11">
-              <Link to="/login">
-                <Mail className="mr-2 h-4 w-4" />
-                GO TO LOGIN
-              </Link>
-            </Button>
-            <div className="text-center text-sm text-slate-400">
-              Already have an account?{' '}
-              <Link to="/login" className="text-emerald-500 hover:text-emerald-400 font-medium">
-                Log In
-              </Link>
-            </div>
-          </CardFooter>
+          {magicLinkSent ? (
+            <>
+              <CardHeader className="text-center">
+                <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-emerald-500/10">
+                  <CheckCircle2 className="h-8 w-8 text-emerald-500" />
+                </div>
+                <CardTitle className="text-2xl text-white">Welcome aboard!</CardTitle>
+                <CardDescription className="text-slate-400">
+                  Your profile has been saved. A secure sign-in link has been sent to{' '}
+                  <span className="font-medium text-slate-200">{sentEmail}</span>.
+                  Click the link to complete your registration and sign in.
+                </CardDescription>
+              </CardHeader>
+              <CardFooter className="flex flex-col space-y-4 pt-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="w-full text-slate-400 hover:text-white"
+                  onClick={() => setMagicLinkSent(false)}
+                >
+                  Use a different email
+                </Button>
+                <div className="text-center text-sm text-slate-400">
+                  Already registered?{' '}
+                  <Link to="/login" className="text-emerald-500 hover:text-emerald-400 font-medium">
+                    Sign in
+                  </Link>
+                </div>
+              </CardFooter>
+            </>
+          ) : (
+            <form onSubmit={handleRegister}>
+              <CardHeader>
+                <CardTitle className="text-2xl text-white">Register</CardTitle>
+                <CardDescription className="text-slate-400">
+                  Fill in your details to create an account
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="name" className="text-slate-300">Full Name</Label>
+                  <Input
+                    id="name"
+                    placeholder="e.g. Mobashshir Zainuddin"
+                    className="bg-slate-800 border-slate-700 text-white focus-visible:ring-emerald-500"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    disabled={registerLoading}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="email" className="text-slate-300">Institute Email</Label>
+                  <div className="flex">
+                    <Input
+                      id="email"
+                      placeholder="e.g. mobo"
+                      className="bg-slate-800 border-slate-700 text-white rounded-r-none focus-visible:ring-emerald-500"
+                      value={emailPrefix}
+                      onChange={(e) => setEmailPrefix(e.target.value)}
+                      disabled={registerLoading}
+                    />
+                    <div className="bg-slate-800 border border-l-0 border-slate-700 text-slate-400 px-3 flex items-center rounded-r-md text-sm font-medium whitespace-nowrap">
+                      @kgpian.iitkgp.ac.in
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="phone" className="text-slate-300">Phone Number</Label>
+                  <Input
+                    id="phone"
+                    placeholder="e.g. 7481843499"
+                    className="bg-slate-800 border-slate-700 text-white focus-visible:ring-emerald-500"
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                    disabled={registerLoading}
+                    inputMode="tel"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="rollNumber" className="text-slate-300">Roll Number</Label>
+                  <Input
+                    id="rollNumber"
+                    placeholder="e.g. 23M3PE01"
+                    className="bg-slate-800 border-slate-700 text-white focus-visible:ring-emerald-500"
+                    value={rollNumber}
+                    onChange={(e) => setRollNumber(e.target.value)}
+                    disabled={registerLoading}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="department" className="text-slate-300">Department</Label>
+                  <Select value={department} onValueChange={setDepartment} disabled={registerLoading}>
+                    <SelectTrigger
+                      id="department"
+                      className="w-full bg-slate-800 border-slate-700 text-white focus-visible:ring-emerald-500"
+                    >
+                      <SelectValue placeholder="Select your department" />
+                    </SelectTrigger>
+                    <SelectContent className="bg-slate-900 border-slate-700 text-white max-h-80">
+                      {DEPARTMENTS.map((dept) => (
+                        <SelectItem
+                          key={dept}
+                          value={dept}
+                          className="text-white focus:bg-emerald-600 focus:text-white"
+                        >
+                          {dept}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <Button
+                  type="submit"
+                  className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold h-11 mt-6"
+                  disabled={registerLoading}
+                >
+                  {registerLoading ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <UserPlus className="mr-2 h-4 w-4" />
+                  )}
+                  {registerLoading ? 'REGISTERING...' : 'REGISTER & SEND SIGN-IN LINK'}
+                </Button>
+              </CardContent>
+              <CardFooter className="flex flex-col space-y-4 pt-2">
+                <div className="text-center text-sm text-slate-400">
+                  Already have an account?{' '}
+                  <Link to="/login" className="text-emerald-500 hover:text-emerald-400 font-medium">
+                    Sign in
+                  </Link>
+                </div>
+                <div className="text-center text-xs text-slate-500">
+                  By registering, you agree to our terms
+                </div>
+              </CardFooter>
+            </form>
+          )}
         </Card>
       </div>
     </div>

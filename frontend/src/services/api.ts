@@ -80,7 +80,9 @@ export const apiClient = {
 export const authApi = {
   syncUser: () => apiClient.post<{ user: any }>('/auth/sync-user'),
   getCurrentUser: () => apiClient.get('/auth/me'),
-  logout: () => apiClient.post('/auth/logout')
+  logout: () => apiClient.post('/auth/logout'),
+  signup: (data: { emailPrefix: string; name: string; phone: string; rollNumber: string; department: string }) =>
+    apiClient.post<{ user: any }>('/auth/signup', data)
 };
 
 // User API

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
@@ -16,7 +16,6 @@ const Login = () => {
   const navigate = useNavigate();
   const [emailPrefix, setEmailPrefix] = useState('');
   const [emailLoading, setEmailLoading] = useState(false);
-  const [googleLoading, setGoogleLoading] = useState(false);
   const [magicLinkSent, setMagicLinkSent] = useState(false);
 
   useEffect(() => {
@@ -52,26 +51,6 @@ const Login = () => {
       toast.error(error.message || 'Failed to send sign-in link');
     } finally {
       setEmailLoading(false);
-    }
-  };
-
-  const handleGoogleLogin = async () => {
-    setGoogleLoading(true);
-    try {
-      const { error } = await supabase.auth.signInWithOAuth({
-        provider: 'google',
-        options: {
-          redirectTo: CALLBACK_URL,
-          queryParams: {
-            hd: 'kgpian.iitkgp.ac.in'
-          }
-        }
-      });
-      if (error) throw error;
-    } catch (error: any) {
-      console.error('Google login error:', error);
-      toast.error(error.message || 'Failed to login with Google');
-      setGoogleLoading(false);
     }
   };
 
@@ -111,6 +90,12 @@ const Login = () => {
                 >
                   Use a different email
                 </Button>
+                <div className="text-center text-sm text-slate-400">
+                  New here?{' '}
+                  <Link to="/register" className="text-emerald-500 hover:text-emerald-400 font-medium">
+                    Create an account
+                  </Link>
+                </div>
               </CardFooter>
             </>
           ) : (
@@ -131,7 +116,7 @@ const Login = () => {
                       className="bg-slate-800 border-slate-700 text-white rounded-r-none focus-visible:ring-emerald-500"
                       value={emailPrefix}
                       onChange={(e) => setEmailPrefix(e.target.value)}
-                      disabled={emailLoading || googleLoading}
+                      disabled={emailLoading}
                     />
                     <div className="bg-slate-800 border border-l-0 border-slate-700 text-slate-400 px-3 flex items-center rounded-r-md text-sm font-medium whitespace-nowrap">
                       @kgpian.iitkgp.ac.in
@@ -142,44 +127,24 @@ const Login = () => {
                 <Button
                   type="submit"
                   className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold h-11"
-                  disabled={emailLoading || googleLoading}
+                  disabled={emailLoading}
                 >
                   {emailLoading ? (
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                   ) : (
                     <Mail className="mr-2 h-4 w-4" />
                   )}
-                  SEND EMAIL
-                </Button>
-
-                <div className="relative py-2">
-                  <div className="absolute inset-0 flex items-center">
-                    <span className="w-full border-t border-slate-800" />
-                  </div>
-                  <div className="relative flex justify-center text-xs uppercase">
-                    <span className="bg-slate-900 px-2 text-slate-500 font-medium">Or continue with</span>
-                  </div>
-                </div>
-
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="w-full bg-slate-800 border-slate-700 text-white hover:bg-slate-700 hover:text-white"
-                  onClick={handleGoogleLogin}
-                  disabled={emailLoading || googleLoading}
-                >
-                  {googleLoading ? (
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  ) : (
-                    <svg className="mr-2 h-4 w-4" aria-hidden="true" focusable="false" data-prefix="fab" data-icon="google" role="img" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 488 512">
-                      <path fill="currentColor" d="M488 261.8C488 403.3 391.1 504 248 504 110.8 504 0 393.2 0 256S110.8 8 248 8c66.8 0 123 24.5 166.3 64.9l-67.5 64.9C258.5 52.6 94.3 116.6 94.3 256c0 86.5 69.1 156.6 153.7 156.6 98.2 0 135-70.4 140.8-106.9H248v-85.3h236.1c2.3 12.7 3.9 24.9 3.9 41.4z"></path>
-                    </svg>
-                  )}
-                  Google
+                  SEND SIGN-IN LINK
                 </Button>
               </CardContent>
               <CardFooter className="flex flex-col space-y-4 pt-2">
                 <div className="text-center text-sm text-slate-400">
+                  New here?{' '}
+                  <Link to="/register" className="text-emerald-500 hover:text-emerald-400 font-medium">
+                    Create an account
+                  </Link>
+                </div>
+                <div className="text-center text-xs text-slate-500">
                   By logging in, you agree to our terms
                 </div>
               </CardFooter>

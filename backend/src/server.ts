@@ -33,9 +33,13 @@ app.use(helmet({
 }));
 
 // CORS - Allow all origins in development, restrict to FRONTEND_URL in production
-const allowedOrigins = process.env.NODE_ENV === 'production'
-  ? [FRONTEND_URL, 'https://friday-cab-management-kuchlachati.vercel.app', 'https://kuchlachati.iitkgpcabs.in'] 
-  : ['http://localhost:5173', 'http://localhost:3000'];
+const allowedOrigins =
+  process.env.NODE_ENV === 'production'
+    ? [FRONTEND_URL]
+    : [
+        'http://localhost:5173',
+        'http://localhost:3000'
+      ];
 
 app.use(cors({
   origin: (origin, callback) => {

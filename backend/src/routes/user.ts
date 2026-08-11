@@ -221,6 +221,10 @@ router.get('/', authenticate, authorizeAdmin, async (req: AuthenticatedRequest, 
           department: true,
           isAdmin: true,
           isBlocked: true,
+          approvalStatus: true,
+          approvalReviewedAt: true,
+          approvalReviewedBy: true,
+          rejectionReason: true,
           createdAt: true,
           _count: {
             select: {
@@ -231,7 +235,10 @@ router.get('/', authenticate, authorizeAdmin, async (req: AuthenticatedRequest, 
             }
           }
         },
-        orderBy: { createdAt: 'desc' },
+        orderBy: [
+          { approvalStatus: 'asc' },
+          { createdAt: 'desc' }
+        ],
         skip,
         take: limitNum
       }),

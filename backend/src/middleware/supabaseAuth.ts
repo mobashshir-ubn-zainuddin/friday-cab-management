@@ -66,14 +66,15 @@ export const verifySupabaseUser = async (
           email,
           name: user.user_metadata?.full_name || user.user_metadata?.name || '',
           isAdmin,
-          isBlocked: false
+          isBlocked: false,
+          approvalStatus: isAdmin ? 'APPROVED' : 'PENDING'
         }
       });
     }
 
     // Attach user to request
     req.user = dbUser;
-    
+
     next();
   } catch (error) {
     console.error('Supabase auth error:', error);

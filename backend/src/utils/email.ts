@@ -261,3 +261,85 @@ export const sendBookingConfirmation = async (
 };
 
 export default transporter;
+
+export const sendNewRegistrationToAdmins = async (
+  adminEmails: string[],
+  userData: {
+    name: string;
+    email: string;
+    phone?: string | null;
+    rollNumber?: string | null;
+    department?: string | null;
+    createdAt: Date | string;
+  },
+  adminDashboardUrl: string
+): Promise<boolean> => {
+  if (adminEmails.length === 0) {
+    console.warn('⚠️ No admin emails configured; skipping new-registration notification');
+    return false;
+  }
+  const createdAtFormatted = formatEmailDateTime(userData.createdAt);
+  const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+        .container { max-width: 640px; margin: 0 auto; padding: 20px; }
+        .header { background: linear-gradient(135deg, #f59e0b 0%, #ef4444 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
+        .content { background: #f9fafb; padding: 30px; border-radius: 0 0 10px 10px; }
+        .user-card { background: white; padding: 20px; border-radius: 8px; margin: 20px 0; border: 1px solid #e5e7eb; }
+        .row { display: flex; padding: 8px 0; border-bottom: 1px dashed #e5e7eb; }
+        .row:last-child { border-bottom: none; }
+        .label { width: 140px; font-weight: bold; color: #6b7280; }
+        .value { flex: 1; color: #111827; word-break: break-all; }
+        .cta-button { display: inline-block; background: #059669; color: white !important; padding: 14px 28px; text-decoration: none; border-radius: 6px; font-weight: bold; margin-top: 20px; }
+        .note { background: #fffbeb; border-left: 4px solid #f59e0b; padding: 14px 18px; border-radius: 4px; margin-top: 20px; color: #92400e; }
+        .footer { text-align: center; margin-top: 30px; color: #9ca3af; font-size: 12px; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header">
+          <h1>🔔 New User Registration</h1>
+          <p>Friday Cab Management System — Admin Action Required</p>
+        </div>
+        <div class="content">
+          <p>Hi Admin,</p>
+          <p>A new user has registered on the Friday Cab portal and is waiting for your verification.
+          <strong> Do NOT send a sign-in link to the user until you have reviewed and approved their details.</strong></p>
+
+          <h3>Submitted Details</h3>
+          <div class="user-card">
+            <div class="row"><span class="label">Full Name</span><span class="value">${userData.name}</span></div>
+            <div class="row"><span class="label">Institute Email</span><span class="value">${userData.email}</span></div>
+            ${userData.phone ? `<div class="row"><span class="label">Phone</span><span class="value">${userData.phone}</span></div>` : ''}
+            ${userData.rollNumber ? `<div class="row"><span class="label">Roll Number</span><span class="value">${userData.rollNumber}</span></div>` : ''}
+            ${userData.department ? `<div class="row"><span class="label">Department</span><span class="value">${userData.department}</span></div>` : ''}
+            <div class="row"><span class="label">Registered At</span><span class="value">${createdAtFormatted}</span></div>
+          </div>
+
+          <div class="note">
+            <strong>Next step:</strong> Review the user in the Admin Dashboard and either Approve or Reject.
+            When you click <strong>Approve</strong>, the system will automatically email the secure sign-in link to the user.
+          </div>
+
+          <center>
+            <a class="cta-button" href="${adminDashboardUrl}">Review Pending Users →</a>
+          </center>
+        </div>
+        <div class="footer">
+          <p>This is an automated message from Friday Cab Management System · IIT Kharagpur</p>
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+
+  return sendEmail({
+    to: adminEmails,
+    subject: `🔔 New Registration: ${userData.name} (${userData.email}) — Awaiting Approval`,
+    html
+  });
+};
+

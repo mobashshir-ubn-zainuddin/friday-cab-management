@@ -1,4 +1,6 @@
 // User types
+export type UserApprovalStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
+
 export interface User {
   id: string;
   email: string;
@@ -8,6 +10,10 @@ export interface User {
   department?: string;
   isAdmin: boolean;
   isBlocked?: boolean;
+  approvalStatus?: UserApprovalStatus;
+  approvalReviewedAt?: string;
+  approvalReviewedBy?: string;
+  rejectionReason?: string;
   createdAt: string;
   hasPendingPayments?: boolean;
 }

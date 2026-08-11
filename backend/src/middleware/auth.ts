@@ -67,7 +67,8 @@ export const authenticate = async (
           email,
           name: user.user_metadata?.full_name || user.user_metadata?.name || '',
           isAdmin,
-          isBlocked: false
+          isBlocked: false,
+          approvalStatus: isAdmin ? 'APPROVED' : 'PENDING'
         }
       });
     }
@@ -76,6 +77,26 @@ export const authenticate = async (
       res.status(403).json({
         success: false,
         error: 'Your account has been blocked.'
+      });
+      return;
+    }
+
+    if (!dbUser.isAdmin && dbUser.approvalStatus === 'PENDING') {
+      res.status(403).json({
+        success: false,
+        error: 'ACCOUNT_PENDING_APPROVAL',
+        message: 'Your account is awaiting admin verification. Please wait for an admin to approve your registration.'
+      });
+      return;
+    }
+
+    if (!dbUser.isAdmin && dbUser.approvalStatus === 'REJECTED') {
+      res.status(403).json({
+        success: false,
+        error: 'ACCOUNT_REJECTED',
+        message: dbUser.rejectionReason
+          ? `Your registration was rejected. Reason: ${dbUser.rejectionReason}`
+          : 'Your registration was not approved. Please contact an administrator.'
       });
       return;
     }

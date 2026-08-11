@@ -8,25 +8,30 @@ datasource db {
 }
 
 model User {
-  id            String    @id @default(uuid())
-  email         String    @unique
-  password      String?
-  name          String
-  phone         String?
-  rollNumber    String?   @unique
-  department    String?
-  isAdmin       Boolean   @default(false)
-  isBlocked     Boolean   @default(false)
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-  
+  id                   String              @id @default(uuid())
+  email                String              @unique
+  password             String?
+  name                 String
+  phone                String?
+  rollNumber           String?             @unique
+  department           String?
+  isAdmin              Boolean             @default(false)
+  isBlocked            Boolean             @default(false)
+  approvalStatus       UserApprovalStatus  @default(APPROVED)
+  approvalReviewedAt   DateTime?
+  approvalReviewedBy   String?
+  rejectionReason      String?
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
+
   // Relations
-  bookings      Booking[]
-  payments      Payment[]
-  cabAssignments CabAssignment[]
-  
+  bookings             Booking[]
+  payments             Payment[]
+  cabAssignments       CabAssignment[]
+
   @@index([email])
   @@index([isAdmin])
+  @@index([approvalStatus])
 }
 
 model Trip {
@@ -187,4 +192,10 @@ enum PaymentStatus {
   COMPLETED
   FAILED
   REFUNDED
+}
+
+enum UserApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
 }

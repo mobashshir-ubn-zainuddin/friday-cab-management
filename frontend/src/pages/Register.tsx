@@ -66,6 +66,7 @@ const Register = () => {
   const [registerLoading, setRegisterLoading] = useState(false);
   const [magicLinkSent, setMagicLinkSent] = useState(false);
   const [alreadyExisted, setAlreadyExisted] = useState(false);
+  const [isPendingApproval, setIsPendingApproval] = useState(false);
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -83,6 +84,7 @@ const Register = () => {
 
     setRegisterLoading(true);
     setAlreadyExisted(false);
+    setIsPendingApproval(false);
     try {
       // Step 1: Save user details to backend database (or get existing user)
       const signupResult = await authApi.signup({
@@ -96,7 +98,22 @@ const Register = () => {
       const existing = !!signupResult?.alreadyExisted;
       setAlreadyExisted(existing);
 
-      // Step 2: Trigger Supabase magic link to their email
+      // Handle approval status
+      const needsApproval = signupResult.needsAdminApproval;
+
+      if (needsApproval) {
+        setMagicLinkSent(false);
+        setIsPendingApproval(true);
+
+        if (existing) {
+          toast.success('Your registration is already awaiting admin verification.');
+        } else {
+          toast.success('Registration submitted! Your account is pending admin approval.');
+        }
+        return;
+      }
+
+      // Step 2: Trigger Supabase magic link to their email (Only for auto-approved users)
       const email = `${emailPrefix.toLowerCase().trim()}@kgpian.iitkgp.ac.in`;
       const { error } = await supabase.auth.signInWithOtp({
         email,
@@ -148,7 +165,32 @@ const Register = () => {
         </div>
 
         <Card className="bg-slate-900 border-slate-800 shadow-xl">
-          {magicLinkSent ? (
+          {isPendingApproval ? (
+            <>
+              <CardHeader className="text-center">
+                <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-amber-500/10">
+                  <Loader2 className="h-8 w-8 text-amber-500 animate-spin" />
+                </div>
+                <CardTitle className="text-2xl text-white">Verification Pending</CardTitle>
+                <CardDescription className="text-slate-400">
+                  Your registration is pending admin verification. Once your registration is approved, a login link will be sent to your email.
+                </CardDescription>
+              </CardHeader>
+              <CardFooter className="flex flex-col space-y-4 pt-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="w-full text-slate-400 hover:text-white"
+                  onClick={() => {
+                    setIsPendingApproval(false);
+                    setAlreadyExisted(false);
+                  }}
+                >
+                  Use a different email
+                </Button>
+              </CardFooter>
+            </>
+          ) : magicLinkSent ? (
             <>
               <CardHeader className="text-center">
                 <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-emerald-500/10">
@@ -226,7 +268,6 @@ const Register = () => {
                     disabled={registerLoading}
                   />
                 </div>
-
                 <div className="space-y-2">
                   <Label htmlFor="email" className="text-slate-300">Institute Email</Label>
                   <div className="flex">
@@ -243,7 +284,6 @@ const Register = () => {
                     </div>
                   </div>
                 </div>
-
                 <div className="space-y-2">
                   <Label htmlFor="phone" className="text-slate-300">Phone Number</Label>
                   <Input
@@ -256,7 +296,6 @@ const Register = () => {
                     inputMode="tel"
                   />
                 </div>
-
                 <div className="space-y-2">
                   <Label htmlFor="rollNumber" className="text-slate-300">Roll Number</Label>
                   <Input
@@ -268,7 +307,6 @@ const Register = () => {
                     disabled={registerLoading}
                   />
                 </div>
-
                 <div className="space-y-2">
                   <Label htmlFor="department" className="text-slate-300">Department</Label>
                   <Select value={department} onValueChange={setDepartment} disabled={registerLoading}>
@@ -291,7 +329,6 @@ const Register = () => {
                     </SelectContent>
                   </Select>
                 </div>
-
                 <Button
                   type="submit"
                   className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold h-11 mt-6"

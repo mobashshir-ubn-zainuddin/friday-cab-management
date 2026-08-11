@@ -69,16 +69,42 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const userData = response.user;
       setUser(userData);
       localStorage.setItem('user', JSON.stringify(userData));
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error syncing user:', error);
-      // If sync fails (e.g., user not fully registered), we might still have a partial user
-      // or we might need to redirect to profile to complete registration
+
+      const errorMsg = error?.message || '';
+      if (errorMsg === 'ACCOUNT_PENDING_APPROVAL') {
+        setUser(null);
+        localStorage.removeItem('user');
+        alert('Your account is awaiting admin verification. Please wait for an admin to approve your registration.');
+        await logout();
+        return;
+      }
+
+      if (errorMsg === 'ACCOUNT_REJECTED') {
+        setUser(null);
+        localStorage.removeItem('user');
+        alert('Your registration was not approved. Please contact an administrator.');
+        await logout();
+        return;
+      }
+
+      // If sync fails for other reasons, try fetching current user
       try {
         const userData = await authApi.getCurrentUser();
         setUser(userData as User);
         localStorage.setItem('user', JSON.stringify(userData));
-      } catch (err) {
+      } catch (err: any) {
         console.error('Error fetching current user:', err);
+        const currentErrorMsg = err?.message || '';
+        if (currentErrorMsg === 'ACCOUNT_PENDING_APPROVAL' || currentErrorMsg === 'ACCOUNT_REJECTED') {
+          setUser(null);
+          localStorage.removeItem('user');
+          alert(currentErrorMsg === 'ACCOUNT_PENDING_APPROVAL'
+            ? 'Your account is awaiting admin verification.'
+            : 'Your registration was not approved.');
+          await logout();
+        }
       }
     }
   };

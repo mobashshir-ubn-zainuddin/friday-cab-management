@@ -26,9 +26,11 @@ import {
   Ticket,
   CreditCard,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  Loader2
 } from 'lucide-react';
 import { formatDateIST } from '@/utils/timezone';
+import { Label } from '@/components/ui/label';
 
 const UserManagement = () => {
   const [users, setUsers] = useState<User[]>([]);
@@ -37,7 +39,8 @@ const UserManagement = () => {
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
-  const [actionType, setActionType] = useState<'block' | 'admin' | null>(null);
+  const [actionType, setActionType] = useState<'block' | 'admin' | 'approve' | 'reject' | null>(null);
+  const [rejectionReason, setRejectionReason] = useState('');
 
   useEffect(() => {
     fetchUsers();
@@ -45,10 +48,10 @@ const UserManagement = () => {
 
   const fetchUsers = async () => {
     try {
-      const data = await userApi.getAllUsers({ 
-        page: page, 
-        limit: 10, 
-        search: search || undefined 
+      const data = await userApi.getAllUsers({
+        page: page,
+        limit: 10,
+        search: search || undefined
       });
       setUsers((data as any).users);
       setTotalPages((data as any).pagination.totalPages);
@@ -86,6 +89,35 @@ const UserManagement = () => {
       fetchUsers();
     } catch (error: any) {
       const message = error.response?.data?.error || 'Failed to update user';
+      toast.error(message);
+    }
+  };
+
+  const handleApproveUser = async () => {
+    if (!selectedUser) return;
+    try {
+      await userApi.approveUser(selectedUser.id);
+      toast.success(`User ${selectedUser.name} approved successfully`);
+      setSelectedUser(null);
+      setActionType(null);
+      fetchUsers();
+    } catch (error: any) {
+      const message = error.response?.data?.error || 'Failed to approve user';
+      toast.error(message);
+    }
+  };
+
+  const handleRejectUser = async () => {
+    if (!selectedUser) return;
+    try {
+      await userApi.rejectUser(selectedUser.id, rejectionReason);
+      toast.success(`User ${selectedUser.name} rejected successfully`);
+      setSelectedUser(null);
+      setActionType(null);
+      setRejectionReason('');
+      fetchUsers();
+    } catch (error: any) {
+      const message = error.response?.data?.error || 'Failed to reject user';
       toast.error(message);
     }
   };
@@ -151,6 +183,18 @@ const UserManagement = () => {
                           Admin
                         </Badge>
                       )}
+                      {user.approvalStatus === 'PENDING' && (
+                        <Badge variant="outline" className="bg-blue-500/10 text-blue-400 border-blue-500/30">
+                          <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                          Pending
+                        </Badge>
+                      )}
+                      {user.approvalStatus === 'REJECTED' && (
+                        <Badge variant="outline" className="bg-red-500/10 text-red-400 border-red-500/30">
+                          <UserX className="w-3 h-3 mr-1" />
+                          Rejected
+                        </Badge>
+                      )}
                       {user.isBlocked && (
                         <Badge variant="outline" className="bg-red-500/10 text-red-400 border-red-500/30">
                           <UserX className="w-3 h-3 mr-1" />
@@ -158,7 +202,7 @@ const UserManagement = () => {
                         </Badge>
                       )}
                     </div>
-                    
+
                     <div className="flex items-center gap-4 mt-2 text-sm text-slate-400 flex-wrap">
                       <span className="flex items-center gap-1">
                         <Mail className="w-4 h-4" />
@@ -183,6 +227,34 @@ const UserManagement = () => {
                 </div>
 
                 <div className="flex items-center gap-2">
+                  {user.approvalStatus === 'PENDING' && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setSelectedUser(user);
+                        setActionType('approve');
+                      }}
+                      className="border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10"
+                    >
+                      <UserCheck className="w-4 h-4 mr-1" />
+                      Approve
+                    </Button>
+                  )}
+                  {user.approvalStatus === 'PENDING' && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setSelectedUser(user);
+                        setActionType('reject');
+                      }}
+                      className="border-red-500/30 text-red-400 hover:bg-red-500/10"
+                    >
+                      <UserX className="w-4 h-4 mr-1" />
+                      Reject & Delete
+                    </Button>
+                  )}
                   <Button
                     variant="outline"
                     size="sm"
@@ -190,8 +262,8 @@ const UserManagement = () => {
                       setSelectedUser(user);
                       setActionType('admin');
                     }}
-                    className={user.isAdmin 
-                      ? 'border-amber-500/30 text-amber-400 hover:bg-amber-500/10' 
+                    className={user.isAdmin
+                      ? 'border-amber-500/30 text-amber-400 hover:bg-amber-500/10'
                       : 'border-slate-700 text-slate-300 hover:bg-slate-800'
                     }
                   >
@@ -205,8 +277,8 @@ const UserManagement = () => {
                       setSelectedUser(user);
                       setActionType('block');
                     }}
-                    className={user.isBlocked 
-                      ? 'border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10' 
+                    className={user.isBlocked
+                      ? 'border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10'
                       : 'border-red-500/30 text-red-400 hover:bg-red-500/10'
                     }
                   >
@@ -259,26 +331,35 @@ const UserManagement = () => {
       )}
 
       {/* Action Dialog */}
-      <Dialog 
-        open={!!selectedUser && !!actionType} 
+      <Dialog
+        open={!!selectedUser && !!actionType}
         onOpenChange={() => {
           setSelectedUser(null);
           setActionType(null);
+          setRejectionReason('');
         }}
       >
         <DialogContent className="bg-slate-900 border-slate-800 text-white">
           <DialogHeader>
             <DialogTitle>
-              {actionType === 'block' 
+              {actionType === 'block'
                 ? (selectedUser?.isBlocked ? 'Unblock User' : 'Block User')
-                : (selectedUser?.isAdmin ? 'Remove Admin' : 'Grant Admin')
+                : actionType === 'admin'
+                ? (selectedUser?.isAdmin ? 'Remove Admin' : 'Grant Admin')
+                : actionType === 'approve'
+                ? 'Approve User'
+                : 'Reject & Delete User'
               }
             </DialogTitle>
             <DialogDescription className="text-slate-400">
-              Are you sure you want to {actionType === 'block' 
-                ? (selectedUser?.isBlocked ? 'unblock' : 'block')
-                : (selectedUser?.isAdmin ? 'remove admin from' : 'grant admin to')
-              } {selectedUser?.name}?
+              {actionType === 'block'
+                ? `Are you sure you want to ${selectedUser?.isBlocked ? 'unblock' : 'block'} ${selectedUser?.name}?`
+                : actionType === 'admin'
+                ? `Are you sure you want to ${selectedUser?.isAdmin ? 'remove admin from' : 'grant admin to'} ${selectedUser?.name}?`
+                : actionType === 'approve'
+                ? `Approve ${selectedUser?.name} to access the system?`
+                : `Permanently reject and delete ${selectedUser?.name}'s registration request? This action cannot be undone.`
+              }
             </DialogDescription>
           </DialogHeader>
 
@@ -288,15 +369,23 @@ const UserManagement = () => {
               onClick={() => {
                 setSelectedUser(null);
                 setActionType(null);
+                setRejectionReason('');
               }}
               className="border-slate-700 text-slate-300 hover:bg-slate-800"
             >
               Cancel
             </Button>
             <Button
-              onClick={actionType === 'block' ? handleBlockUser : handleSetAdmin}
-              className={actionType === 'block' && !selectedUser?.isBlocked 
-                ? 'bg-red-500 hover:bg-red-600' 
+              onClick={() => {
+                if (actionType === 'block') handleBlockUser();
+                else if (actionType === 'admin') handleSetAdmin();
+                else if (actionType === 'approve') handleApproveUser();
+                else if (actionType === 'reject') handleRejectUser();
+              }}
+              className={actionType === 'block' && !selectedUser?.isBlocked
+                ? 'bg-red-500 hover:bg-red-600'
+                : actionType === 'reject'
+                ? 'bg-red-500 hover:bg-red-600'
                 : 'bg-amber-500 hover:bg-amber-600'
               }
             >

@@ -97,7 +97,9 @@ export const userApi = {
   updateProfile: (data: any) => apiClient.patch('/users/profile', data),
   getAllUsers: (params?: any) => apiClient.get('/users', { params }),
   blockUser: (id: string, isBlocked: boolean) => apiClient.patch(`/users/${id}/block`, { isBlocked }),
-  setAdmin: (id: string, isAdmin: boolean) => apiClient.patch(`/users/${id}/admin`, { isAdmin })
+  setAdmin: (id: string, isAdmin: boolean) => apiClient.patch(`/users/${id}/admin`, { isAdmin }),
+  approveUser: (id: string) => apiClient.post(`/auth/admin/users/${id}/approve`),
+  rejectUser: (id: string, reason?: string) => apiClient.post(`/auth/admin/users/${id}/reject`, { reason }),
 };
 
 // Trip API

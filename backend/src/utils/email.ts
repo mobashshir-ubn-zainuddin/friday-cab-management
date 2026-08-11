@@ -1,11 +1,11 @@
-import nodemailer from 'nodemailer';
+import { Resend } from 'resend';
 import { EmailOptions } from '../types';
 import { formatInIST } from './timezone';
 
-const SMTP_HOST = process.env.SMTP_HOST || 'smtp.gmail.com';
-const SMTP_PORT = parseInt(process.env.SMTP_PORT || '587');
-const SMTP_USER = process.env.SMTP_USER || '';
-const SMTP_PASS = process.env.SMTP_PASS || '';
+const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
+const RESEND_FROM_EMAIL = process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev';
+
+const resend = new Resend(RESEND_API_KEY);
 
 // Email-safe time formatting — always in Asia/Kolkata, independent of server TZ.
 export const formatEmailDate = (d: Date | string): string =>
@@ -17,22 +17,15 @@ export const formatEmailTime = (d: Date | string): string =>
 export const formatEmailDateTime = (d: Date | string): string =>
   formatInIST(d, 'EEEE, dd MMMM yyyy hh:mm a');
 
-// Create transporter
-const transporter = nodemailer.createTransport({
-  host: SMTP_HOST,
-  port: SMTP_PORT,
-  secure: SMTP_PORT === 465,
-  auth: {
-    user: SMTP_USER,
-    pass: SMTP_PASS
-  }
-});
-
-// Verify transporter connection
+// Verify Resend connection
 export const verifyEmailConnection = async (): Promise<boolean> => {
   try {
-    await transporter.verify();
-    console.log('✅ Email service connected successfully');
+    // Resend doesn't have a direct verify method, so we'll just check if API key is set
+    if (!RESEND_API_KEY) {
+      console.error('❌ Resend API key not configured');
+      return false;
+    }
+    console.log('✅ Email service (Resend) configured successfully');
     return true;
   } catch (error) {
     console.error('❌ Email service connection failed:', error);
@@ -40,18 +33,18 @@ export const verifyEmailConnection = async (): Promise<boolean> => {
   }
 };
 
-// Send email
+// Send email using Resend
 export const sendEmail = async (options: EmailOptions): Promise<boolean> => {
   try {
-    const result = await transporter.sendMail({
-      from: `"Friday Cab System" <${SMTP_USER}>`,
-      to: options.to,
+    const result = await resend.emails.send({
+      from: `"Friday Cab System" <${RESEND_FROM_EMAIL}>`,
+      to: Array.isArray(options.to) ? options.to : [options.to],
       subject: options.subject,
       html: options.html,
       text: options.text
     });
     
-    console.log('📧 Email sent:', result.messageId);
+    console.log('📧 Email sent:', result.data?.id);
     return true;
   } catch (error) {
     console.error('❌ Failed to send email:', error);
@@ -260,8 +253,6 @@ export const sendBookingConfirmation = async (
   });
 };
 
-export default transporter;
-
 export const sendNewRegistrationToAdmins = async (
   adminEmails: string[],
   userData: {
@@ -342,4 +333,3 @@ export const sendNewRegistrationToAdmins = async (
     html
   });
 };
-

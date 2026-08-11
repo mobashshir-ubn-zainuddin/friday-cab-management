@@ -67,8 +67,15 @@ export const verifySupabaseUser = async (
           name: user.user_metadata?.full_name || user.user_metadata?.name || '',
           isAdmin,
           isBlocked: false,
-          approvalStatus: isAdmin ? 'APPROVED' : 'PENDING'
+          approvalStatus: isAdmin ? 'APPROVED' : 'PENDING',
+          supabaseUserId: user.id
         }
+      });
+    } else if (!dbUser.supabaseUserId) {
+      // Update existing user with Supabase ID if missing
+      dbUser = await prisma.user.update({
+        where: { email: email },
+        data: { supabaseUserId: user.id }
       });
     }
 

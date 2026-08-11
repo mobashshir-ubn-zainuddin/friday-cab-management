@@ -348,7 +348,7 @@ router.post(
       const redirectTo = `${FRONTEND_URL}${CALLBACK_PATH}`;
       const { error: sbErr } = await client.auth.signInWithOtp({
         email: target.email,
-        options: { emailRedirectTo: redirectTo, shouldCreateUser: false }
+        options: { emailRedirectTo: redirectTo, shouldCreateUser: true }
       });
 
       if (sbErr) {
@@ -394,17 +394,37 @@ router.post(
         return res.status(400).json({ success: false, error: 'Only pending users can be rejected.' });
       }
 
-      // 1) Delete from application DB
+      // 1) Delete from Supabase Auth first
+      let sbUserIdToDelete = target.supabaseUserId;
+
+      if (!sbUserIdToDelete) {
+        // Try to find the Supabase user ID by email if not stored in our DB
+        const { data: { users }, error: listErr } = await supabaseAdmin.auth.admin.listUsers();
+        if (!listErr && users) {
+          const sbUser = (users as any[]).find(u => u.email === target.email);
+          if (sbUser) {
+            sbUserIdToDelete = sbUser.id;
+          }
+        }
+      }
+
+      if (sbUserIdToDelete) {
+        const { error: sbErr } = await supabaseAdmin.auth.admin.deleteUser(sbUserIdToDelete);
+        if (sbErr) {
+          console.error(`Failed to delete Supabase user ${sbUserIdToDelete}:`, sbErr);
+          return res.status(502).json({
+            success: false,
+            error: `Failed to delete Supabase account: ${sbErr.message}. Please try again.`
+          });
+        }
+      } else {
+        console.warn(`No Supabase Auth account found for ${target.email}. Proceeding to delete application record.`);
+      }
+
+      // 2) Delete from application DB only after successful Supabase deletion (or if no SB user existed)
       await prisma.user.delete({
         where: { id }
       });
-
-      // 2) Delete from Supabase Auth
-      const { error: sbErr } = await supabaseAdmin.auth.admin.deleteUser(target.email);
-      if (sbErr) {
-        console.error(`Failed to delete Supabase user for ${target.email}:`, sbErr);
-        // We continue because the application record is already gone.
-      }
 
       res.json({
         success: true,

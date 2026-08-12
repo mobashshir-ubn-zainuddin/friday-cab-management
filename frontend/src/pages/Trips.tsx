@@ -62,12 +62,25 @@ const Trips = () => {
     if (!bookingTrip) return;
 
     setBookingLoading(true);
+    // Optimistic update: add userBooking to the trip immediately
+    const tripId = bookingTrip.id;
+    setTrips(prev => prev.map(trip => 
+      trip.id === tripId 
+        ? { ...trip, userBooking: { id: 'optimistic', status: 'CONFIRMED' as const }, currentBookings: trip.currentBookings + 1 }
+        : trip
+    ));
+    
     try {
-      await bookingApi.create(bookingTrip.id);
+      await bookingApi.create(tripId);
       toast.success('Trip booked successfully!');
-      fetchTrips();
       setBookingTrip(null);
     } catch (error: any) {
+      // Rollback optimistic update on error
+      setTrips(prev => prev.map(trip => 
+        trip.id === tripId 
+          ? { ...trip, userBooking: null, currentBookings: trip.currentBookings - 1 }
+          : trip
+      ));
       const message = error.response?.data?.error || 'Failed to book trip';
       toast.error(message);
     } finally {

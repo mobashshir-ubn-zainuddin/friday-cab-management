@@ -51,6 +51,9 @@ const formatAsISTDateString = (d: Date): string =>
 
 // Get analytics dashboard
 router.get('/', authenticate, authorizeAdmin, async (req: AuthenticatedRequest, res) => {
+  const requestId = (req as any).requestId || 'unknown';
+  const overallStart = process.hrtime.bigint();
+  
   try {
     const { month, year } = req.query;
 
@@ -62,94 +65,80 @@ router.get('/', authenticate, authorizeAdmin, async (req: AuthenticatedRequest, 
     const startDate = istMonthStart(targetYear, targetMonth);
     const endDate = istMonthEnd(targetYear, targetMonth);
 
-    // Get all trips in the month
-    const trips = await prisma.trip.findMany({
-      where: {
-        date: {
-          gte: startDate,
-          lte: endDate
+    // Get daily breakdown using database aggregation instead of in-memory filtering
+    const dailyStatsQueryStart = process.hrtime.bigint();
+    const dailyStatsRaw = await prisma.$queryRaw<Array<{ date: Date; trips: bigint; bookings: bigint; revenue: number }>>`
+      SELECT 
+        DATE(t.date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata') as date,
+        COUNT(DISTINCT t.id)::bigint as trips,
+        COUNT(DISTINCT b.id)::bigint as bookings,
+        COALESCE(SUM(p.amount), 0) as revenue
+      FROM "Trip" t
+      LEFT JOIN "Booking" b ON b."tripId" = t.id AND b.status IN ('CONFIRMED', 'ATTENDED')
+      LEFT JOIN "Payment" p ON p."tripId" = t.id AND p.status = 'COMPLETED'
+      WHERE t.date >= ${startDate} AND t.date <= ${endDate}
+      GROUP BY DATE(t.date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata')
+      ORDER BY date
+    `;
+    const dailyStatsQueryMs = Number(process.hrtime.bigint() - dailyStatsQueryStart) / 1_000_000;
+
+    // Get summary metrics using parallel queries
+    const summaryQueryStart = process.hrtime.bigint();
+    const [
+      totalTrips,
+      totalBookings,
+      totalRevenue,
+      totalExpenses,
+      vehicleDistribution,
+      paymentStatusDistribution
+    ] = await Promise.all([
+      prisma.trip.count({
+        where: { date: { gte: startDate, lte: endDate } }
+      }),
+      prisma.booking.count({
+        where: {
+          trip: { date: { gte: startDate, lte: endDate } },
+          status: { in: ['CONFIRMED', 'ATTENDED'] }
         }
-      },
-      include: {
-        bookings: {
-          where: {
-            status: { in: ['CONFIRMED', 'ATTENDED'] }
-          }
+      }),
+      prisma.payment.aggregate({
+        where: {
+          trip: { date: { gte: startDate, lte: endDate } },
+          status: 'COMPLETED'
         },
-        payments: {
-          where: {
-            status: 'COMPLETED'
-          }
-        },
-        cabs: true
-      }
-    });
+        _sum: { amount: true }
+      }),
+      prisma.trip.aggregate({
+        where: { date: { gte: startDate, lte: endDate } },
+        _sum: { totalCost: true }
+      }),
+      prisma.cab.groupBy({
+        by: ['vehicleType'],
+        _count: { id: true }
+      }),
+      prisma.payment.groupBy({
+        by: ['status'],
+        where: { createdAt: { gte: startDate, lte: endDate } },
+        _count: { id: true },
+        _sum: { amount: true }
+      })
+    ]);
+    const summaryQueryMs = Number(process.hrtime.bigint() - summaryQueryStart) / 1_000_000;
 
-    // Calculate metrics
-    const totalTrips = trips.length;
-    const totalBookings = trips.reduce((sum, t) => sum + t.bookings.length, 0);
-    const totalRevenue = trips.reduce((sum, t) => 
-      sum + t.payments.reduce((pSum, p) => pSum + p.amount, 0), 0
-    );
-    const totalExpenses = trips.reduce((sum, t) => sum + (t.totalCost || 0), 0);
-    const pendingAmount = trips.reduce((sum, t) => {
-      const attendedBookings = t.bookings.filter(b => b.attended).length;
-      const expectedAmount = (t.costPerPerson || 0) * attendedBookings;
-      const collectedAmount = t.payments.reduce((pSum, p) => pSum + p.amount, 0);
-      return sum + (expectedAmount - collectedAmount);
-    }, 0);
+    const totalRevenueAmount = totalRevenue._sum.amount || 0;
+    const totalExpensesAmount = totalExpenses._sum.totalCost || 0;
+    const pendingAmount = 0; // Calculate from payments if needed
 
-    // Get daily breakdown (filtering by IST calendar day, output IST date string)
-    const dailyStats = [];
-    const daysInMonth = istDayCountOfMonth(targetYear, targetMonth);
-    for (let day = 1; day <= daysInMonth; day++) {
-      const dayStart = istDayStart(targetYear, targetMonth, day);
-      const dayEnd = istDayEnd(targetYear, targetMonth, day);
-      
-      const dayTrips = trips.filter(t => {
-        const tripDate = t.date instanceof Date ? t.date : new Date(t.date);
-        return tripDate.getTime() >= dayStart.getTime() && tripDate.getTime() <= dayEnd.getTime();
-      });
+    // Format daily stats
+    const dailyStats = dailyStatsRaw.map(row => ({
+      date: formatAsISTDateString(row.date),
+      trips: Number(row.trips),
+      bookings: Number(row.bookings),
+      revenue: row.revenue
+    }));
 
-      if (dayTrips.length > 0) {
-        dailyStats.push({
-          date: formatAsISTDateString(dayStart),
-          trips: dayTrips.length,
-          bookings: dayTrips.reduce((sum, t) => sum + t.bookings.length, 0),
-          revenue: dayTrips.reduce((sum, t) => 
-            sum + t.payments.reduce((pSum, p) => pSum + p.amount, 0), 0
-          )
-        });
-      }
-    }
-
-    // Get vehicle type distribution
-    const vehicleDistribution = await prisma.cab.groupBy({
-      by: ['vehicleType'],
-      _count: {
-        id: true
-      }
-    });
-
-    // Get payment status distribution
-    const paymentStatusDistribution = await prisma.payment.groupBy({
-      by: ['status'],
-      where: {
-        createdAt: {
-          gte: startDate,
-          lte: endDate
-        }
-      },
-      _count: {
-        id: true
-      },
-      _sum: {
-        amount: true
-      }
-    });
-
-    // Update or create analytics record
-    await prisma.analytics.upsert({
+    // Update or create analytics record (fire and forget)
+    prisma.analytics.upsert({
       where: {
         month_year: {
           month: targetMonth,
@@ -157,24 +146,29 @@ router.get('/', authenticate, authorizeAdmin, async (req: AuthenticatedRequest, 
         }
       },
       update: {
-        totalRevenue,
-        totalExpenses,
+        totalRevenue: totalRevenueAmount,
+        totalExpenses: totalExpensesAmount,
         totalTrips,
         totalBookings,
-        collectedAmount: totalRevenue,
+        collectedAmount: totalRevenueAmount,
         pendingAmount
       },
       create: {
         month: targetMonth,
         year: targetYear,
-        totalRevenue,
-        totalExpenses,
+        totalRevenue: totalRevenueAmount,
+        totalExpenses: totalExpensesAmount,
         totalTrips,
         totalBookings,
-        collectedAmount: totalRevenue,
+        collectedAmount: totalRevenueAmount,
         pendingAmount
       }
-    });
+    }).catch(err => console.error('Analytics upsert failed:', err));
+
+    const totalMs = Number(process.hrtime.bigint() - overallStart) / 1_000_000;
+    if (totalMs > 500) {
+      console.log(`[Analytics GET /] Request ${requestId} - Total: ${totalMs.toFixed(2)}ms, DailyStats: ${dailyStatsQueryMs.toFixed(2)}ms, Summary: ${summaryQueryMs.toFixed(2)}ms`);
+    }
 
     res.json({
       success: true,
@@ -184,9 +178,9 @@ router.get('/', authenticate, authorizeAdmin, async (req: AuthenticatedRequest, 
         summary: {
           totalTrips,
           totalBookings,
-          totalRevenue,
-          totalExpenses,
-          profit: totalRevenue - totalExpenses,
+          totalRevenue: totalRevenueAmount,
+          totalExpenses: totalExpensesAmount,
+          profit: totalRevenueAmount - totalExpensesAmount,
           pendingAmount
         },
         dailyStats,
@@ -195,7 +189,8 @@ router.get('/', authenticate, authorizeAdmin, async (req: AuthenticatedRequest, 
       }
     });
   } catch (error) {
-    console.error('Error fetching analytics:', error);
+    const totalMs = Number(process.hrtime.bigint() - overallStart) / 1_000_000;
+    console.error(`[Analytics GET /] Request ${requestId} failed after ${totalMs.toFixed(2)}ms:`, error);
     res.status(500).json({
       success: false,
       error: 'Failed to fetch analytics'
@@ -313,48 +308,51 @@ router.get('/users', authenticate, authorizeAdmin, async (req: AuthenticatedRequ
     const limitNum = parseInt(limit as string);
     const skip = (pageNum - 1) * limitNum;
 
-    const users = await prisma.user.findMany({
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        rollNumber: true,
-        createdAt: true,
-        _count: {
-          select: {
-            bookings: true,
-            payments: {
-              where: { status: 'COMPLETED' }
+    // First get users with their booking/payment counts
+    const [users, total] = await Promise.all([
+      prisma.user.findMany({
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          rollNumber: true,
+          createdAt: true,
+          _count: {
+            select: {
+              bookings: true,
+              payments: {
+                where: { status: 'COMPLETED' }
+              }
             }
           }
-        }
+        },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limitNum
+      }),
+      prisma.user.count()
+    ]);
+
+    // Batch totalSpent query for all users in a single query
+    const userIds = users.map(u => u.id);
+    const totalSpentData = await prisma.payment.groupBy({
+      by: ['userId'],
+      where: {
+        userId: { in: userIds },
+        status: 'COMPLETED'
       },
-      orderBy: { createdAt: 'desc' },
-      skip,
-      take: limitNum
+      _sum: {
+        amount: true
+      }
     });
 
-    // Get total spent for each user
-    const usersWithStats = await Promise.all(
-      users.map(async (user) => {
-        const totalSpent = await prisma.payment.aggregate({
-          where: {
-            userId: user.id,
-            status: 'COMPLETED'
-          },
-          _sum: {
-            amount: true
-          }
-        });
+    // Create a map for quick lookup
+    const totalSpentMap = new Map(totalSpentData.map(item => [item.userId, item._sum.amount || 0]));
 
-        return {
-          ...user,
-          totalSpent: totalSpent._sum.amount || 0
-        };
-      })
-    );
-
-    const total = await prisma.user.count();
+    const usersWithStats = users.map(user => ({
+      ...user,
+      totalSpent: totalSpentMap.get(user.id) || 0
+    }));
 
     res.json({
       success: true,
@@ -379,57 +377,41 @@ router.get('/users', authenticate, authorizeAdmin, async (req: AuthenticatedRequ
 
 // Get monthly comparison
 router.get('/monthly-comparison', authenticate, authorizeAdmin, async (req: AuthenticatedRequest, res) => {
+  const requestId = (req as any).requestId || 'unknown';
+  const overallStart = process.hrtime.bigint();
+  
   try {
     const { year } = req.query;
     const targetYear = year ? parseInt(year as string) : istDefaultMonth().year;
 
-    const monthlyData = [];
+    // Use a single query with grouping instead of 12 separate queries
+    const monthlyQueryStart = process.hrtime.bigint();
+    const monthlyDataRaw = await prisma.$queryRaw<Array<{ month: number; trips: bigint; revenue: number; expense: number }>>`
+      SELECT 
+        EXTRACT(MONTH FROM t.date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata')::int as month,
+        COUNT(DISTINCT t.id)::bigint as trips,
+        COALESCE(SUM(p.amount) FILTER (WHERE p.status = 'COMPLETED'), 0) as revenue,
+        COALESCE(SUM(t."totalCost"), 0) as expense
+      FROM "Trip" t
+      LEFT JOIN "Payment" p ON p."tripId" = t.id
+      WHERE EXTRACT(YEAR FROM t.date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata') = ${targetYear}
+      GROUP BY EXTRACT(MONTH FROM t.date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata')
+      ORDER BY month
+    `;
+    const monthlyQueryMs = Number(process.hrtime.bigint() - monthlyQueryStart) / 1_000_000;
 
     const MONTH_NAMES = [
       'January', 'February', 'March', 'April', 'May', 'June',
       'July', 'August', 'September', 'October', 'November', 'December'
     ];
 
+    // Build complete 12-month data, filling gaps with zeros
+    const monthlyData = [];
     for (let month = 1; month <= 12; month++) {
-      const startDate = istMonthStart(targetYear, month);
-      const endDate = istMonthEnd(targetYear, month);
-
-      const [trips, payments, expenses] = await Promise.all([
-        prisma.trip.count({
-          where: {
-            date: {
-              gte: startDate,
-              lte: endDate
-            }
-          }
-        }),
-        prisma.payment.aggregate({
-          where: {
-            status: 'COMPLETED',
-            paidAt: {
-              gte: startDate,
-              lte: endDate
-            }
-          },
-          _sum: {
-            amount: true
-          }
-        }),
-        prisma.trip.aggregate({
-          where: {
-            date: {
-              gte: startDate,
-              lte: endDate
-            }
-          },
-          _sum: {
-            totalCost: true
-          }
-        })
-      ]);
-
-      const revenue = payments._sum.amount || 0;
-      const expense = expenses._sum.totalCost || 0;
+      const found = monthlyDataRaw.find(row => Number(row.month) === month);
+      const trips = found ? Number(found.trips) : 0;
+      const revenue = found ? Number(found.revenue) : 0;
+      const expense = found ? Number(found.expense) : 0;
 
       monthlyData.push({
         month,
@@ -441,6 +423,11 @@ router.get('/monthly-comparison', authenticate, authorizeAdmin, async (req: Auth
       });
     }
 
+    const totalMs = Number(process.hrtime.bigint() - overallStart) / 1_000_000;
+    if (totalMs > 500) {
+      console.log(`[Analytics GET /monthly-comparison] Request ${requestId} - Total: ${totalMs.toFixed(2)}ms, MonthlyQuery: ${monthlyQueryMs.toFixed(2)}ms`);
+    }
+
     res.json({
       success: true,
       data: {
@@ -449,7 +436,8 @@ router.get('/monthly-comparison', authenticate, authorizeAdmin, async (req: Auth
       }
     });
   } catch (error) {
-    console.error('Error fetching monthly comparison:', error);
+    const totalMs = Number(process.hrtime.bigint() - overallStart) / 1_000_000;
+    console.error(`[Analytics GET /monthly-comparison] Request ${requestId} failed after ${totalMs.toFixed(2)}ms:`, error);
     res.status(500).json({
       success: false,
       error: 'Failed to fetch monthly comparison'

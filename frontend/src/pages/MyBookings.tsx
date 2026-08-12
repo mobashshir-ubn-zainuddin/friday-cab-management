@@ -61,12 +61,18 @@ const MyBookings = () => {
     if (!cancellingBooking) return;
 
     setCancelLoading(true);
+    const bookingId = cancellingBooking.id;
+    const tripId = cancellingBooking.tripId;
+    // Optimistic update: remove the booking from the list
+    setBookings(prev => prev.filter(b => b.id !== bookingId));
+    
     try {
-      await bookingApi.cancel(cancellingBooking.id);
+      await bookingApi.cancel(bookingId);
       toast.success('Booking cancelled successfully');
-      fetchBookings();
       setCancellingBooking(null);
     } catch (error: any) {
+      // Rollback optimistic update on error - refetch to get correct state
+      fetchBookings();
       const message = error.response?.data?.error || 'Failed to cancel booking';
       toast.error(message);
     } finally {

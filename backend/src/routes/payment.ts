@@ -21,6 +21,9 @@ const verifyPaymentSchema = z.object({
 
 // Get user's payments
 router.get('/my-payments', authenticate, async (req: AuthenticatedRequest, res) => {
+  const requestId = (req as any).requestId || 'unknown';
+  const overallStart = process.hrtime.bigint();
+  
   try {
     const { status, page = '1', limit = '10' } = req.query;
     
@@ -62,6 +65,11 @@ router.get('/my-payments', authenticate, async (req: AuthenticatedRequest, res) 
       prisma.payment.count({ where })
     ]);
 
+    const totalMs = Number(process.hrtime.bigint() - overallStart) / 1_000_000;
+    if (totalMs > 500) {
+      console.log(`[Payment GET /my-payments] Request ${requestId} - Total: ${totalMs.toFixed(2)}ms`);
+    }
+
     res.json({
       success: true,
       data: {
@@ -75,7 +83,8 @@ router.get('/my-payments', authenticate, async (req: AuthenticatedRequest, res) 
       }
     });
   } catch (error) {
-    console.error('Error fetching payments:', error);
+    const totalMs = Number(process.hrtime.bigint() - overallStart) / 1_000_000;
+    console.error(`[Payment GET /my-payments] Request ${requestId} failed after ${totalMs.toFixed(2)}ms:`, error);
     res.status(500).json({
       success: false,
       error: 'Failed to fetch payments'

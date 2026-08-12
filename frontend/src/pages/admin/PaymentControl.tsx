@@ -44,8 +44,11 @@ const PaymentControl = () => {
 
   const fetchData = async () => {
     try {
-      const tripsData = await tripApi.getAll();
-      const pendingData = await adminApi.getPendingPayments();
+      // Parallelize independent API calls
+      const [tripsData, pendingData] = await Promise.all([
+        tripApi.getAll(),
+        adminApi.getPendingPayments()
+      ]);
       
       // Show trips that are COMPLETED or IN_PROGRESS or have bookings
       setTrips((tripsData as any).trips.filter((t: any) => 
@@ -67,13 +70,26 @@ const PaymentControl = () => {
     if (!selectedTrip || !totalCost) return;
 
     setOpeningPayment(true);
+    const tripId = selectedTrip.id;
+    // Optimistic update
+    setTrips(prev => prev.map(trip => 
+      trip.id === tripId 
+        ? { ...trip, paymentWindowOpen: true, costPerPerson: parseFloat(totalCost) / trip.currentBookings, totalCost: parseFloat(totalCost) }
+        : trip
+    ));
+    
     try {
-      await tripApi.togglePaymentWindow(selectedTrip.id, 'open', parseFloat(totalCost));
+      await tripApi.togglePaymentWindow(tripId, 'open', parseFloat(totalCost));
       toast.success('Payment window opened successfully');
       setSelectedTrip(null);
       setTotalCost('');
-      fetchData();
     } catch (error: any) {
+      // Rollback optimistic update on error
+      setTrips(prev => prev.map(trip => 
+        trip.id === tripId 
+          ? { ...trip, paymentWindowOpen: false, costPerPerson: undefined, totalCost: undefined }
+          : trip
+      ));
       const message = error.response?.data?.error || 'Failed to open payment window';
       toast.error(message);
     } finally {
@@ -82,11 +98,24 @@ const PaymentControl = () => {
   };
 
   const handleClosePaymentWindow = async (trip: Trip) => {
+    const tripId = trip.id;
+    // Optimistic update
+    setTrips(prev => prev.map(t => 
+      t.id === tripId 
+        ? { ...t, paymentWindowOpen: false, costPerPerson: undefined, totalCost: undefined }
+        : t
+    ));
+    
     try {
-      await tripApi.togglePaymentWindow(trip.id, 'close');
+      await tripApi.togglePaymentWindow(tripId, 'close');
       toast.success('Payment window closed successfully');
-      fetchData();
     } catch (error: any) {
+      // Rollback optimistic update on error
+      setTrips(prev => prev.map(t => 
+        t.id === tripId 
+          ? { ...t, paymentWindowOpen: true }
+          : t
+      ));
       const message = error.response?.data?.error || 'Failed to close payment window';
       toast.error(message);
     }

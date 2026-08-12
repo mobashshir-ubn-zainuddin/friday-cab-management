@@ -99,8 +99,13 @@ const Payments = () => {
               razorpaySignature: response.razorpay_signature
             });
             
+            // Optimistic update: mark payment as completed
+            setPayments(prev => prev.map(p => 
+              p.id === payment.id 
+                ? { ...p, status: 'COMPLETED' as const, razorpayPaymentId: response.razorpay_payment_id, paidAt: new Date().toISOString() }
+                : p
+            ));
             toast.success('Payment successful!');
-            fetchPayments();
           } catch (error) {
             console.error('Payment verification failed:', error);
             toast.error('Payment verification failed. Please contact support.');

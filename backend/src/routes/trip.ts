@@ -268,6 +268,9 @@ router.get('/', authenticate, async (req: AuthenticatedRequest, res) => {
 
 // Get single trip
 router.get('/:id', authenticate, async (req: AuthenticatedRequest, res) => {
+  const requestId = (req as any).requestId || 'unknown';
+  const overallStart = process.hrtime.bigint();
+  
   try {
     const { id } = req.params;
     const isAdmin = req.user!.isAdmin;
@@ -341,6 +344,11 @@ router.get('/:id', authenticate, async (req: AuthenticatedRequest, res) => {
     // Check if user has booked this trip
     const userBooking = trip.bookings.find(b => b.userId === req.user!.id);
 
+    const totalMs = Number(process.hrtime.bigint() - overallStart) / 1_000_000;
+    if (totalMs > 500) {
+      console.log(`[Trip GET /:id] Request ${requestId} - Total: ${totalMs.toFixed(2)}ms, Trip: ${id}`);
+    }
+
     res.json({
       success: true,
       data: {
@@ -350,7 +358,8 @@ router.get('/:id', authenticate, async (req: AuthenticatedRequest, res) => {
       }
     });
   } catch (error) {
-    console.error('Error fetching trip:', error);
+    const totalMs = Number(process.hrtime.bigint() - overallStart) / 1_000_000;
+    console.error(`[Trip GET /:id] Request ${requestId} failed after ${totalMs.toFixed(2)}ms:`, error);
     res.status(500).json({
       success: false,
       error: 'Failed to fetch trip'

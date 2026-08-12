@@ -87,14 +87,15 @@ const TripManagement = () => {
     if (creatingTrip) return;
     setCreatingTrip(true);
     try {
-      await tripApi.create({
+      const newTrip = await tripApi.create({
         ...formData,
         maxBookings: Number(formData.maxBookings)
       });
+      // Optimistic update: add new trip to list
+      setTrips(prev => [newTrip as any, ...prev]);
       toast.success('Trip created successfully');
       setCreateDialogOpen(false);
       resetForm();
-      fetchTrips();
     } catch (error: any) {
       const message = error.response?.data?.error || 'Failed to create trip';
       toast.error(message);
@@ -107,11 +108,12 @@ const TripManagement = () => {
     if (!editingTrip) return;
 
     try {
-      await tripApi.update(editingTrip.id, formData);
+      const updatedTrip = await tripApi.update(editingTrip.id, formData);
+      // Optimistic update
+      setTrips(prev => prev.map(trip => trip.id === editingTrip.id ? updatedTrip as any : trip));
       toast.success('Trip updated successfully');
       setEditingTrip(null);
       resetForm();
-      fetchTrips();
     } catch (error: any) {
       const message = error.response?.data?.error || 'Failed to update trip';
       toast.error(message);
@@ -120,13 +122,18 @@ const TripManagement = () => {
 
   const handleDelete = async () => {
     if (!deletingTrip || deletingTripId) return;
-    setDeletingTripId(deletingTrip.id);
+    const tripId = deletingTrip.id;
+    setDeletingTripId(tripId);
+    // Optimistic update: remove from list
+    setTrips(prev => prev.filter(trip => trip.id !== tripId));
+    
     try {
-      await tripApi.delete(deletingTrip.id);
+      await tripApi.delete(tripId);
       toast.success('Trip deleted successfully');
       setDeletingTrip(null);
-      fetchTrips();
     } catch (error: any) {
+      // Rollback on error - refetch
+      fetchTrips();
       const message = error.response?.data?.error || 'Failed to delete trip';
       toast.error(message);
     } finally {
@@ -135,11 +142,17 @@ const TripManagement = () => {
   };
 
   const handleToggleBookingWindow = async (trip: Trip, action: 'open' | 'close') => {
+    const tripId = trip.id;
+    const newStatus = action === 'open' ? 'BOOKING_OPEN' : 'BOOKING_CLOSED';
+    // Optimistic update
+    setTrips(prev => prev.map(t => t.id === tripId ? { ...t, status: newStatus as any } : t));
+    
     try {
-      await tripApi.toggleBookingWindow(trip.id, action);
+      await tripApi.toggleBookingWindow(tripId, action);
       toast.success(`Booking window ${action}ed successfully`);
-      fetchTrips();
     } catch (error: any) {
+      // Rollback on error
+      setTrips(prev => prev.map(t => t.id === tripId ? { ...t, status: trip.status } : t));
       const message = error.response?.data?.error || `Failed to ${action} booking window`;
       toast.error(message);
     }

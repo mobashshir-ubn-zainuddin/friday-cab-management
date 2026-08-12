@@ -657,8 +657,8 @@ router.patch('/:id/payment-window', authenticate, authorizeAdmin, async (req: Au
 
 // Delete trip (admin only)
 router.delete('/:id', authenticate, authorizeAdmin, async (req: AuthenticatedRequest, res) => {
+  const { id } = req.params;
   try {
-    const { id } = req.params;
 
     await prisma.trip.delete({
       where: { id }
@@ -668,7 +668,15 @@ router.delete('/:id', authenticate, authorizeAdmin, async (req: AuthenticatedReq
       success: true,
       message: 'Trip deleted successfully'
     });
-  } catch (error) {
+  } catch (error: any) {
+    // Handle Prisma P2025 "Record to delete does not exist" as idempotent success
+    if (error.code === 'P2025') {
+      console.log(`[Trip DELETE] Trip ${id} already deleted (idempotent)`);
+      return res.json({
+        success: true,
+        message: 'Trip already deleted'
+      });
+    }
     console.error('Error deleting trip:', error);
     res.status(500).json({
       success: false,

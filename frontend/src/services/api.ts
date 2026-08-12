@@ -4,8 +4,8 @@ import type { ApiResponse, ApproveUserResponse, RejectUserResponse, BlockUserRes
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
-// Request deduplication cache
-const pendingRequests = new Map<string, Promise<any>>();
+// Request deduplication cache - stores the axios promise for in-flight requests
+const pendingRequests = new Map<string, Promise<AxiosResponse<any>>>();
 
 const getRequestKey = (config: InternalAxiosRequestConfig): string => {
   const method = config.method?.toUpperCase() || 'GET';
@@ -48,20 +48,22 @@ api.interceptors.request.use(
   }
 );
 
-// Request deduplication interceptor
+// Request deduplication interceptor - wraps the actual request to enable deduplication
 api.interceptors.request.use(
   (config) => {
     const key = getRequestKey(config);
     if (key && pendingRequests.has(key)) {
       console.log('[API] Deduplicating request:', key);
-      // Return the existing promise
-      return new Promise((resolve, reject) => {
-        pendingRequests.get(key)!.then(resolve).catch(reject);
-      }) as any;
+      // Throw a special error that will be caught and replaced with the existing promise
+      throw { __deduplicate: true, key };
     }
     return config;
   },
   (error) => {
+    if (error?.__deduplicate) {
+      // Return the existing promise for this deduplicated request
+      return pendingRequests.get(error.key)!;
+    }
     return Promise.reject(error);
   }
 );
@@ -94,7 +96,50 @@ api.interceptors.response.use(
   }
 );
 
-// Generate a unique idempotency key
+// Wrap the actual request methods to track pending requests
+const originalRequest = api.request.bind(api);
+api.request = async (config: InternalAxiosRequestConfig) => {
+  const key = getRequestKey(config);
+  if (key) {
+    const promise = originalRequest(config);
+    pendingRequests.set(key, promise);
+    try {
+      return await promise;
+    } finally {
+      pendingRequests.delete(key);
+    }
+  }
+  return originalRequest(config);
+};
+
+// Generate a stable idempotency key for create operations based on data content
+const generateCreateIdempotencyKey = (data: any): string => {
+  const relevantFields = [
+    data.title,
+    data.description,
+    data.date,
+    data.bookingStartTime,
+    data.bookingEndTime,
+    data.cancellationDeadline,
+    data.departureTime,
+    data.returnTime,
+    data.maxBookings
+  ];
+  const hash = relevantFields.filter(Boolean).join('|');
+  let hashValue = 0;
+  for (let i = 0; i < hash.length; i++) {
+    hashValue = ((hashValue << 5) - hashValue) + hash.charCodeAt(i);
+    hashValue |= 0;
+  }
+  return `create-trip-${Math.abs(hashValue).toString(36)}`;
+};
+
+// Generate a stable idempotency key for delete operations based on resource ID
+const generateDeleteIdempotencyKey = (resourceType: string, id: string): string => {
+  return `delete-${resourceType}-${id}`;
+};
+
+// Generate a unique idempotency key for other operations
 const generateIdempotencyKey = (prefix: string): string => {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
 };
@@ -183,14 +228,14 @@ export const userApi = {
 export const tripApi = {
   getAll: (params?: any) => apiClient.get('/trips', { params }),
   getById: (id: string) => apiClient.get(`/trips/${id}`),
-  create: (data: any) => apiClient.post('/trips', data, { idempotencyKey: generateIdempotencyKey('create-trip') }),
+  create: (data: any) => apiClient.post('/trips', data, { idempotencyKey: generateCreateIdempotencyKey(data) }),
   update: (id: string, data: any) => apiClient.patch(`/trips/${id}`, data, { idempotencyKey: generateIdempotencyKey(`update-trip-${id}`) }),
   updateStatus: (id: string, status: string) => apiClient.patch(`/trips/${id}/status`, { status }, { idempotencyKey: generateIdempotencyKey(`trip-status-${id}`) }),
   toggleBookingWindow: (id: string, action: 'open' | 'close') => 
     apiClient.patch(`/trips/${id}/booking-window`, { action }, { idempotencyKey: generateIdempotencyKey(`trip-booking-window-${id}-${action}`) }),
   togglePaymentWindow: (id: string, action: 'open' | 'close', totalCost?: number) => 
     apiClient.patch(`/trips/${id}/payment-window`, { action, totalCost }, { idempotencyKey: generateIdempotencyKey(`trip-payment-window-${id}-${action}`) }),
-  delete: (id: string) => apiClient.delete(`/trips/${id}`, { idempotencyKey: generateIdempotencyKey(`delete-trip-${id}`) })
+  delete: (id: string) => apiClient.delete(`/trips/${id}`, { idempotencyKey: generateDeleteIdempotencyKey('trip', id) })
 };
 
 // Booking API

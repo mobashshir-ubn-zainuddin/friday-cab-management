@@ -9,6 +9,7 @@ export const authenticate = async (
   res: Response,
   next: NextFunction
 ): Promise<void> => {
+  const authStartTime = process.hrtime.bigint();
   try {
     const authHeader = req.headers.authorization;
 
@@ -42,7 +43,9 @@ export const authenticate = async (
       dbUser = cachedUser;
     } else {
       // Verify token with Supabase
+      const supabaseStartTime = process.hrtime.bigint();
       const { data: { user: supabaseUser }, error } = await supabase.auth.getUser(token);
+      const supabaseMs = Number(process.hrtime.bigint() - supabaseStartTime) / 1_000_000;
 
       if (error || !supabaseUser) {
         res.status(401).json({
@@ -69,9 +72,14 @@ export const authenticate = async (
       dbUser = getCachedUser(emailCacheKey);
 
       if (!dbUser) {
+        const prismaStartTime = process.hrtime.bigint();
         dbUser = await prisma.user.findUnique({
           where: { email: email }
         });
+        const prismaMs = Number(process.hrtime.bigint() - prismaStartTime) / 1_000_000;
+        if (prismaMs > 100) {
+          console.log(`[Auth] prisma.user.findUnique took ${prismaMs.toFixed(2)}ms for email: ${email}`);
+        }
 
         if (!dbUser) {
           // Create new user if not exists
@@ -133,9 +141,14 @@ export const authenticate = async (
     }
 
     req.user = dbUser;
+    const authTotalMs = Number(process.hrtime.bigint() - authStartTime) / 1_000_000;
+    if (authTotalMs > 500) {
+      console.log(`[Auth] Total authentication took ${authTotalMs.toFixed(2)}ms`);
+    }
     next();
   } catch (error) {
-    console.error('Authentication error:', error);
+    const authTotalMs = Number(process.hrtime.bigint() - authStartTime) / 1_000_000;
+    console.error(`[Auth] Authentication error after ${authTotalMs.toFixed(2)}ms:`, error);
     res.status(401).json({
       success: false,
       error: 'Authentication failed.'

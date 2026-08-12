@@ -5,6 +5,13 @@ const prismaClientSingleton = () => {
     log: process.env.NODE_ENV === 'development' 
       ? ['query', 'error', 'warn'] 
       : ['error'],
+    // Disable Prisma's connection pool when using PgBouncer in transaction mode
+    // PgBouncer manages connections, so we don't need Prisma's pool
+    datasources: {
+      db: {
+        url: process.env.DATABASE_URL
+      }
+    }
   });
 };
 

@@ -53,6 +53,8 @@ const TripManagement = () => {
   const [viewingBookingsTrip, setViewingBookingsTrip] = useState<Trip | null>(null);
   const [tripBookings, setTripBookings] = useState<any[]>([]);
   const [loadingBookings, setLoadingBookings] = useState(false);
+  const [creatingTrip, setCreatingTrip] = useState(false);
+  const [deletingTripId, setDeletingTripId] = useState<string | null>(null);
   const [formData, setFormData] = useState({
     title: '',
     description: '',
@@ -82,6 +84,8 @@ const TripManagement = () => {
   };
 
   const handleCreate = async () => {
+    if (creatingTrip) return;
+    setCreatingTrip(true);
     try {
       await tripApi.create({
         ...formData,
@@ -94,6 +98,8 @@ const TripManagement = () => {
     } catch (error: any) {
       const message = error.response?.data?.error || 'Failed to create trip';
       toast.error(message);
+    } finally {
+      setCreatingTrip(false);
     }
   };
 
@@ -113,8 +119,8 @@ const TripManagement = () => {
   };
 
   const handleDelete = async () => {
-    if (!deletingTrip) return;
-
+    if (!deletingTrip || deletingTripId) return;
+    setDeletingTripId(deletingTrip.id);
     try {
       await tripApi.delete(deletingTrip.id);
       toast.success('Trip deleted successfully');
@@ -123,6 +129,8 @@ const TripManagement = () => {
     } catch (error: any) {
       const message = error.response?.data?.error || 'Failed to delete trip';
       toast.error(message);
+    } finally {
+      setDeletingTripId(null);
     }
   };
 
@@ -481,14 +489,16 @@ const TripManagement = () => {
                 resetForm();
               }}
               className="border-slate-700 text-slate-300 hover:bg-slate-800"
+              disabled={creatingTrip}
             >
               Cancel
             </Button>
             <Button
               onClick={editingTrip ? handleUpdate : handleCreate}
               className="bg-amber-500 hover:bg-amber-600"
+              disabled={creatingTrip}
             >
-              {editingTrip ? 'Update Trip' : 'Create Trip'}
+              {creatingTrip ? 'Creating...' : editingTrip ? 'Update Trip' : 'Create Trip'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -509,14 +519,16 @@ const TripManagement = () => {
               variant="outline"
               onClick={() => setDeletingTrip(null)}
               className="border-slate-700 text-slate-300 hover:bg-slate-800"
+              disabled={deletingTripId !== null}
             >
               Cancel
             </Button>
             <Button
               onClick={handleDelete}
               variant="destructive"
+              disabled={deletingTripId !== null}
             >
-              Delete Trip
+              {deletingTripId ? 'Deleting...' : 'Delete Trip'}
             </Button>
           </DialogFooter>
         </DialogContent>

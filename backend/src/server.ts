@@ -21,6 +21,10 @@ import paymentWebhookRoutes from './routes/paymentWebhook';
 import adminRoutes from './routes/admin';
 import analyticsRoutes from './routes/analytics';
 
+// Middleware
+import { clearUserCacheMiddleware } from './middleware/supabaseAuth';
+import { idempotencyMiddleware } from './middleware/idempotency';
+
 const app = express();
 app.set('trust proxy', 1);
 
@@ -80,6 +84,17 @@ app.use(cookieParser());
 
 // Logging
 app.use(morgan('dev'));
+
+// Request-scoped user cache clearing
+app.use(clearUserCacheMiddleware);
+
+// Idempotency middleware for mutations
+app.use('/api', (req, res, next) => {
+  if (['POST', 'PATCH', 'PUT', 'DELETE'].includes(req.method)) {
+    return idempotencyMiddleware(req, res, next);
+  }
+  next();
+});
 
 // API Routes
 app.use('/api/auth', authRoutes);

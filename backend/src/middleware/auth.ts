@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { prisma } from '../utils/prisma';
+import { prisma, getCachedUser, setCachedUser } from '../utils/prisma';
 import { AuthenticatedRequest } from '../types';
 import { supabase } from '../config/supabaseClient';
 
@@ -30,54 +30,78 @@ export const authenticate = async (
       return;
     }
 
-    // Verify token with Supabase
-    const { data: { user }, error } = await supabase.auth.getUser(token);
+    // Check cache first (token -> user)
+    const cacheKey = `token:${token.substring(0, 32)}`;
+    const cachedUser = getCachedUser(cacheKey);
+    
+    let user: any;
+    let dbUser: any;
 
-    if (error || !user) {
-      res.status(401).json({
-        success: false,
-        error: 'Invalid or expired token.'
-      });
-      return;
-    }
+    if (cachedUser) {
+      user = { id: cachedUser.supabaseUserId, email: cachedUser.email };
+      dbUser = cachedUser;
+    } else {
+      // Verify token with Supabase
+      const { data: { user: supabaseUser }, error } = await supabase.auth.getUser(token);
 
-    const email = user.email;
+      if (error || !supabaseUser) {
+        res.status(401).json({
+          success: false,
+          error: 'Invalid or expired token.'
+        });
+        return;
+      }
 
-    // 🔒 HARD SECURITY CHECK: Only allow @kgpian.iitkgp.ac.in
-    if (!email?.endsWith('@kgpian.iitkgp.ac.in')) {
-      res.status(403).json({
-        success: false,
-        error: 'Unauthorized domain. Only @kgpian.iitkgp.ac.in emails are allowed.'
-      });
-      return;
-    }
+      user = supabaseUser;
+      const email = user.email;
 
-    // Check if user exists in our DB
-    let dbUser = await prisma.user.findUnique({
-      where: { email: email }
-    });
+      // 🔒 HARD SECURITY CHECK: Only allow @kgpian.iitkgp.ac.in
+      if (!email?.endsWith('@kgpian.iitkgp.ac.in')) {
+        res.status(403).json({
+          success: false,
+          error: 'Unauthorized domain. Only @kgpian.iitkgp.ac.in emails are allowed.'
+        });
+        return;
+      }
 
-    if (!dbUser) {
-      // Create new user if not exists
-      const adminEmails = process.env.ADMIN_EMAILS?.split(',').map(e => e.trim().toLowerCase()) || [];
-      const isAdmin = adminEmails.includes(email.toLowerCase());
+      // Check if user exists in our DB
+      const emailCacheKey = `email:${email}`;
+      dbUser = getCachedUser(emailCacheKey);
 
-      dbUser = await prisma.user.create({
-        data: {
-          email,
-          name: user.user_metadata?.full_name || user.user_metadata?.name || '',
-          isAdmin,
-          isBlocked: false,
-          approvalStatus: isAdmin ? 'APPROVED' : 'PENDING',
-          supabaseUserId: user.id
+      if (!dbUser) {
+        dbUser = await prisma.user.findUnique({
+          where: { email: email }
+        });
+
+        if (!dbUser) {
+          // Create new user if not exists
+          const adminEmails = process.env.ADMIN_EMAILS?.split(',').map(e => e.trim().toLowerCase()) || [];
+          const isAdmin = adminEmails.includes(email.toLowerCase());
+
+          dbUser = await prisma.user.create({
+            data: {
+              email,
+              name: user.user_metadata?.full_name || user.user_metadata?.name || '',
+              isAdmin,
+              isBlocked: false,
+              approvalStatus: isAdmin ? 'APPROVED' : 'PENDING',
+              supabaseUserId: user.id
+            }
+          });
+        } else if (!dbUser.supabaseUserId) {
+          // Update existing user with Supabase ID if missing
+          dbUser = await prisma.user.update({
+            where: { email: email },
+            data: { supabaseUserId: user.id }
+          });
         }
-      });
-    } else if (!dbUser.supabaseUserId) {
-      // Update existing user with Supabase ID if missing
-      dbUser = await prisma.user.update({
-        where: { email: email },
-        data: { supabaseUserId: user.id }
-      });
+
+        // Cache the user
+        setCachedUser(emailCacheKey, dbUser);
+      }
+
+      // Cache token -> user mapping
+      setCachedUser(cacheKey, dbUser);
     }
 
     if (dbUser.isBlocked) {

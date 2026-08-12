@@ -3,7 +3,12 @@ import { EmailOptions } from '../types';
 import { formatInIST } from './timezone';
 
 const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
-const RESEND_FROM_EMAIL = process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev';
+// Use verified domain for production, fallback to Resend test address for development
+const RESEND_FROM_EMAIL = process.env.RESEND_FROM_EMAIL 
+  ? (process.env.RESEND_FROM_EMAIL.includes('@') 
+    ? process.env.RESEND_FROM_EMAIL 
+    : `noreply@${process.env.RESEND_FROM_EMAIL}`)
+  : 'onboarding@resend.dev';
 
 const resend = new Resend(RESEND_API_KEY);
 
@@ -17,6 +22,14 @@ export const formatEmailTime = (d: Date | string): string =>
 export const formatEmailDateTime = (d: Date | string): string =>
   formatInIST(d, 'EEEE, dd MMMM yyyy hh:mm a');
 
+// Email send result type
+export interface EmailSendResult {
+  success: boolean;
+  id?: string;
+  error?: string;
+  rateLimited?: boolean;
+}
+
 // Verify Resend connection
 export const verifyEmailConnection = async (): Promise<boolean> => {
   try {
@@ -25,7 +38,7 @@ export const verifyEmailConnection = async (): Promise<boolean> => {
       console.error('❌ Resend API key not configured');
       return false;
     }
-    console.log('✅ Email service (Resend) configured successfully');
+    console.log(`✅ Email service (Resend) configured successfully (from: ${RESEND_FROM_EMAIL})`);
     return true;
   } catch (error) {
     console.error('❌ Email service connection failed:', error);
@@ -34,7 +47,7 @@ export const verifyEmailConnection = async (): Promise<boolean> => {
 };
 
 // Send email using Resend
-export const sendEmail = async (options: EmailOptions): Promise<boolean> => {
+export const sendEmail = async (options: EmailOptions): Promise<EmailSendResult> => {
   try {
     const result = await resend.emails.send({
       from: `"Friday Cab System" <${RESEND_FROM_EMAIL}>`,
@@ -44,11 +57,40 @@ export const sendEmail = async (options: EmailOptions): Promise<boolean> => {
       text: options.text
     });
     
+    if (result.error) {
+      const errorMessage = result.error.message || 'Unknown error';
+      console.error('❌ Failed to send email:', errorMessage);
+      
+      // Check for rate limiting
+      const isRateLimited = errorMessage.includes('rate limit') || 
+        errorMessage.includes('429') || 
+        errorMessage.includes('over_email_send_rate_limit');
+      
+      return {
+        success: false,
+        error: errorMessage,
+        rateLimited: isRateLimited
+      };
+    }
+    
     console.log('📧 Email sent:', result.data?.id);
-    return true;
-  } catch (error) {
-    console.error('❌ Failed to send email:', error);
-    return false;
+    return {
+      success: true,
+      id: result.data?.id
+    };
+  } catch (error: any) {
+    const errorMessage = error?.message || 'Unknown error';
+    console.error('❌ Failed to send email:', errorMessage);
+    
+    const isRateLimited = errorMessage.includes('rate limit') || 
+      errorMessage.includes('429') || 
+      errorMessage.includes('over_email_send_rate_limit');
+    
+    return {
+      success: false,
+      error: errorMessage,
+      rateLimited: isRateLimited
+    };
   }
 };
 
@@ -62,7 +104,7 @@ export const sendTripNotification = async (
     bookingStartTime: string;
     bookingEndTime: string;
   }
-): Promise<boolean> => {
+): Promise<EmailSendResult> => {
   const html = `
     <!DOCTYPE html>
     <html>
@@ -138,7 +180,7 @@ export const sendPaymentReminder = async (
     amount: number;
     dueDate: string;
   }
-): Promise<boolean> => {
+): Promise<EmailSendResult> => {
   const html = `
     <!DOCTYPE html>
     <html>
@@ -203,7 +245,7 @@ export const sendBookingConfirmation = async (
       driverPhone?: string;
     };
   }
-): Promise<boolean> => {
+): Promise<EmailSendResult> => {
   const html = `
     <!DOCTYPE html>
     <html>
@@ -264,10 +306,10 @@ export const sendNewRegistrationToAdmins = async (
     createdAt: Date | string;
   },
   adminDashboardUrl: string
-): Promise<boolean> => {
+): Promise<EmailSendResult> => {
   if (adminEmails.length === 0) {
     console.warn('⚠️ No admin emails configured; skipping new-registration notification');
-    return false;
+    return { success: false, error: 'No admin emails configured' };
   }
   const createdAtFormatted = formatEmailDateTime(userData.createdAt);
   const html = `

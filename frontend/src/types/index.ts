@@ -216,4 +216,45 @@ export interface UpdateProfileFormData {
   name?: string;
   phone?: string;
   department?: string;
+  rollNumber?: string;
+}
+
+// Admin mutation response types
+export interface ApproveUserResponse {
+  approvalStatus: 'APPROVED';
+  emailStatus: 'sending' | 'already_sent' | 'rate_limited' | 'failed';
+  user: {
+    id: string;
+    email: string;
+    name: string;
+  };
+}
+
+export interface RejectUserResponse {
+  // Empty - backend returns only success + message
+}
+
+export interface BlockUserResponse {
+  id: string;
+  name: string;
+  email: string;
+  isBlocked: boolean;
+}
+
+export interface SetAdminResponse {
+  id: string;
+  name: string;
+  email: string;
+  isAdmin: boolean;
+}
+
+// Paginated users response
+export interface PaginatedUsersResponse {
+  users: User[];
+  pagination: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+  };
 }

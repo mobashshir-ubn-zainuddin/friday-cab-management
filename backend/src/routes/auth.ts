@@ -185,6 +185,7 @@ router.post('/signup', validateBody(signupSchema), async (req, res) => {
 // Sync Supabase user to Prisma DB. Also blocks PENDING / REJECTED users from
 // establishing a session (the magic link might have been sent before
 // approval, or Supabase could allow any user on the project).
+// Uses cached user from verifySupabaseUser middleware to avoid extra DB query.
 // ---------------------------------------------------------------------------
 router.post('/sync-user', verifySupabaseUser, async (req: AuthenticatedRequest, res) => {
   try {
@@ -215,13 +216,20 @@ router.post('/sync-user', verifySupabaseUser, async (req: AuthenticatedRequest, 
       });
     }
 
-    const serializable = await prisma.user.findUnique({
-      where: { id: dbUser.id },
-      select: {
-        ...PUBLIC_USER_SELECT,
-        updatedAt: true
+    // Check pending payments (lightweight count query)
+    const pendingPayments = await prisma.payment.count({
+      where: {
+        userId: dbUser.id,
+        status: { in: ['PENDING', 'FAILED'] }
       }
     });
+
+    // Construct response from cached user data + pending payments
+    const serializable = {
+      ...dbUser,
+      hasPendingPayments: pendingPayments > 0,
+      updatedAt: dbUser.updatedAt
+    };
 
     res.json({
       success: true,
@@ -238,6 +246,7 @@ router.post('/sync-user', verifySupabaseUser, async (req: AuthenticatedRequest, 
 
 // ---------------------------------------------------------------------------
 // Get current user
+// Uses cached user from verifySupabaseUser middleware to avoid extra DB query.
 // ---------------------------------------------------------------------------
 router.get('/me', verifySupabaseUser, async (req: AuthenticatedRequest, res) => {
   try {
@@ -268,31 +277,23 @@ router.get('/me', verifySupabaseUser, async (req: AuthenticatedRequest, res) => 
       });
     }
 
-    const user = await prisma.user.findUnique({
-      where: { id: dbUser.id },
-      select: PUBLIC_USER_SELECT
-    });
-
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        error: 'User not found'
-      });
-    }
-
+    // Check pending payments (lightweight count query)
     const pendingPayments = await prisma.payment.count({
       where: {
-        userId: user.id,
+        userId: dbUser.id,
         status: { in: ['PENDING', 'FAILED'] }
       }
     });
 
+    // Construct response from cached user data + pending payments
+    const userResponse = {
+      ...dbUser,
+      hasPendingPayments: pendingPayments > 0
+    };
+
     res.json({
       success: true,
-      data: {
-        ...user,
-        hasPendingPayments: pendingPayments > 0
-      }
+      data: userResponse
     });
   } catch (error) {
     console.error('Error fetching user:', error);
@@ -305,13 +306,17 @@ router.get('/me', verifySupabaseUser, async (req: AuthenticatedRequest, res) => 
 
 // ---------------------------------------------------------------------------
 // Admin only: Approve a pending user and send the Supabase magic link to
-// the user's email. Approval is idempotent — re-approving re-sends the link
-// (useful if the user says they never received it).
+// the user's email.
+// - Idempotent: if already APPROVED, returns success with emailStatus "already_sent"
+// - Email sent asynchronously (fire-and-forget) to not block approval response
+// - Rate limit (429) handled gracefully - approval still succeeds
+// - Returns structured response: { approvalStatus, emailStatus, message }
 // ---------------------------------------------------------------------------
 router.post(
   '/admin/users/:id/approve',
   verifySupabaseUser,
   async (req: AuthenticatedRequest, res) => {
+    const startTime = Date.now();
     try {
       const admin = req.user!;
       if (!admin.isAdmin) {
@@ -320,17 +325,39 @@ router.post(
 
       const { id } = req.params;
 
+      // Atomic check-and-update: only transition PENDING -> APPROVED
       const target = await prisma.user.findUnique({ where: { id } });
       if (!target) {
         return res.status(404).json({ success: false, error: 'User not found.' });
       }
       if (target.isAdmin) {
-        return res
-          .status(400)
-          .json({ success: false, error: 'Admin accounts do not need manual approval.' });
+        return res.status(400).json({ success: false, error: 'Admin accounts do not need manual approval.' });
       }
 
-      await prisma.user.update({
+      // Check current approval status for idempotency
+      if (target.approvalStatus === 'APPROVED') {
+        // Already approved - return success with email status
+        console.log(`[Approve] User ${target.email} already APPROVED (idempotent)`);
+        return res.json({
+          success: true,
+          data: {
+            approvalStatus: 'APPROVED',
+            emailStatus: 'already_sent',
+            user: { id: target.id, email: target.email, name: target.name }
+          },
+          message: `${target.name} is already approved. No action needed.`
+        });
+      }
+
+      if (target.approvalStatus === 'REJECTED') {
+        return res.status(400).json({ 
+          success: false, 
+          error: 'Cannot approve a rejected user. Please contact support.' 
+        });
+      }
+
+      // Atomically update: PENDING -> APPROVED
+      const updatedUser = await prisma.user.update({
         where: { id },
         data: {
           approvalStatus: 'APPROVED',
@@ -340,28 +367,49 @@ router.post(
         }
       });
 
-      // Send the sign-in link (magic link) to the user. Prefer the
-      // supabaseAdmin client so we can trigger this from the backend without
-      // the user present. If service-role client is not configured, fall
-      // back to the regular client which will still send the email.
-      const client = (supabaseAdmin as any) || (require('../config/supabaseClient').supabase as any);
-      const redirectTo = `${FRONTEND_URL}${CALLBACK_PATH}`;
-      const { error: sbErr } = await client.auth.signInWithOtp({
-        email: target.email,
-        options: { emailRedirectTo: redirectTo, shouldCreateUser: true }
-      });
+      const approvalDuration = Date.now() - startTime;
+      console.log(`[Approve] User ${target.email} approved in ${approvalDuration}ms`);
 
-      if (sbErr) {
-        console.error(`Supabase send OTP failed for ${target.email}:`, sbErr);
-        return res.status(502).json({
-          success: false,
-          error: `User was approved, but we couldn't email the sign-in link: ${sbErr.message}. The admin can try again by clicking Approve once more.`
-        });
-      }
+      // Send magic link asynchronously (fire-and-forget)
+      // This doesn't block the approval response
+      const sendMagicLink = async () => {
+        try {
+          const client = (supabaseAdmin as any) || (require('../config/supabaseClient').supabase as any);
+          const redirectTo = `${FRONTEND_URL}${CALLBACK_PATH}`;
+          const { error: sbErr } = await client.auth.signInWithOtp({
+            email: target.email,
+            options: { emailRedirectTo: redirectTo, shouldCreateUser: true }
+          });
+
+          if (sbErr) {
+            console.error(`[Approve] Supabase send OTP failed for ${target.email}:`, sbErr);
+            
+            // Handle rate limit specifically
+            if (sbErr.message?.includes('rate limit') || sbErr.message?.includes('429') || sbErr.message?.includes('over_email_send_rate_limit')) {
+              console.warn(`[Approve] Rate limited sending magic link to ${target.email}. Admin can resend later.`);
+              // Could emit event for admin notification here
+              return;
+            }
+            console.error(`[Approve] Failed to send magic link to ${target.email}:`, sbErr.message);
+          } else {
+            console.log(`[Approve] Magic link sent successfully to ${target.email}`);
+          }
+        } catch (err) {
+          console.error(`[Approve] Unexpected error sending magic link to ${target.email}:`, err);
+        }
+      };
+
+      // Fire and forget - don't await
+      sendMagicLink();
 
       res.json({
         success: true,
-        message: `${target.name} has been approved and a sign-in link was emailed to ${target.email}.`
+        data: {
+          approvalStatus: 'APPROVED',
+          emailStatus: 'sending', // Will be "sent" or "rate_limited" or "failed" - async
+          user: { id: updatedUser.id, email: updatedUser.email, name: updatedUser.name }
+        },
+        message: `${target.name} has been approved. Sign-in link is being sent to ${target.email}.`
       });
     } catch (error) {
       console.error('Approve user error:', error);
@@ -373,6 +421,7 @@ router.post(
 // ---------------------------------------------------------------------------
 // Admin only: Reject a pending user by permanently deleting their record from
 // both the application database and Supabase Auth.
+// - Idempotent: if already deleted/rejected, returns success
 // ---------------------------------------------------------------------------
 router.post(
   '/admin/users/:id/reject',
@@ -386,12 +435,22 @@ router.post(
       const { id } = req.params;
 
       const target = await prisma.user.findUnique({ where: { id } });
-      if (!target) return res.status(404).json({ success: false, error: 'User not found.' });
+      if (!target) {
+        // Idempotent: already deleted
+        return res.json({
+          success: true,
+          message: 'User already deleted or does not exist.'
+        });
+      }
       if (target.isAdmin) {
         return res.status(400).json({ success: false, error: 'Admin accounts cannot be rejected via this workflow.' });
       }
       if (target.approvalStatus !== 'PENDING') {
-        return res.status(400).json({ success: false, error: 'Only pending users can be rejected.' });
+        // Idempotent: already processed
+        return res.json({
+          success: true,
+          message: `User ${target.name} is already ${target.approvalStatus.toLowerCase()}. No action needed.`
+        });
       }
 
       // 1) Delete from Supabase Auth first

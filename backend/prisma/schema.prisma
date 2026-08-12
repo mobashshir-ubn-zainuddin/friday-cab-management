@@ -5,6 +5,7 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 model User {
@@ -31,6 +32,9 @@ model User {
   @@index([email])
   @@index([isAdmin])
   @@index([approvalStatus])
+  @@index([supabaseUserId])
+  @@index([isAdmin, approvalStatus])
+  @@index([isBlocked, approvalStatus])
 }
 
 model Trip {
@@ -58,6 +62,10 @@ model Trip {
 
   @@index([date])
   @@index([status])
+  @@index([status, date])
+  @@index([departureTime])
+  @@index([bookingStartTime, bookingEndTime])
+  @@index([createdBy])
 }
 
 model Booking {
@@ -78,6 +86,10 @@ model Booking {
   @@index([userId])
   @@index([tripId])
   @@index([status])
+  @@index([userId, status])
+  @@index([tripId, status])
+  @@index([attended, status])
+  @@index([createdAt])
 }
 
 model Cab {
@@ -95,6 +107,7 @@ model Cab {
   assignments      CabAssignment[]
 
   @@index([tripId])
+  @@index([tripId, vehicleType])
 }
 
 model CabAssignment {
@@ -111,6 +124,8 @@ model CabAssignment {
   @@unique([cabId, seatNumber])
   @@index([cabId])
   @@index([userId])
+  @@index([bookingId])
+  @@index([cabId, userId])
 }
 
 model Payment {
@@ -133,6 +148,10 @@ model Payment {
   @@index([userId])
   @@index([tripId])
   @@index([status])
+  @@index([userId, status])
+  @@index([tripId, status])
+  @@index([razorpayOrderId])
+  @@index([paidAt])
 }
 
 model Analytics {

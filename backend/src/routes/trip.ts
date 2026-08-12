@@ -402,8 +402,10 @@ router.post('/', authenticate, authorizeAdmin, validateBody(createTripSchema), a
 
     // Don't wait for emails to send
     Promise.allSettled(emailPromises).then(results => {
-      const sent = results.filter(r => r.status === 'fulfilled').length;
-      console.log(`Trip notification emails sent to ${sent} users`);
+      const sent = results.filter(r => r.status === 'fulfilled' && r.value.success).length;
+      const failed = results.filter(r => r.status === 'fulfilled' && !r.value.success).length;
+      const errors = results.filter(r => r.status === 'rejected').length;
+      console.log(`Trip notification emails: ${sent} sent, ${failed} failed, ${errors} errors`);
     });
 
     res.status(201).json({

@@ -20,62 +20,72 @@ router.get('/dashboard', authenticate, async (req: AuthenticatedRequest, res) =>
   try {
     const userId = req.user!.id;
 
-    // Get total trips (completed bookings)
-    const totalTrips = await prisma.booking.count({
-      where: {
-        userId,
-        status: { in: ['ATTENDED', 'NO_SHOW'] }
-      }
-    });
-
-    // Get active bookings (confirmed bookings for upcoming trips)
-    const activeBookings = await prisma.booking.count({
-      where: {
-        userId,
-        status: 'CONFIRMED',
-        trip: {
-          status: { in: ['UPCOMING', 'BOOKING_OPEN', 'BOOKING_CLOSED', 'CAB_ASSIGNED'] }
+    // Run all independent queries in parallel
+    const [
+      totalTrips,
+      activeBookings,
+      completedTrips,
+      upcomingTrips,
+      pendingPayments,
+      totalSpent
+    ] = await Promise.all([
+      // Get total trips (completed bookings)
+      prisma.booking.count({
+        where: {
+          userId,
+          status: { in: ['ATTENDED', 'NO_SHOW'] }
         }
-      }
-    });
+      }),
 
-    // Get completed trips
-    const completedTrips = await prisma.booking.count({
-      where: {
-        userId,
-        status: 'ATTENDED'
-      }
-    });
-
-    // Get upcoming trips (business-date aware: any trip not yet departed, using absolute instant comparison)
-    const upcomingTrips = await prisma.booking.count({
-      where: {
-        userId,
-        status: 'CONFIRMED',
-        trip: {
-          departureTime: { gte: new Date() }
+      // Get active bookings (confirmed bookings for upcoming trips)
+      prisma.booking.count({
+        where: {
+          userId,
+          status: 'CONFIRMED',
+          trip: {
+            status: { in: ['UPCOMING', 'BOOKING_OPEN', 'BOOKING_CLOSED', 'CAB_ASSIGNED'] }
+          }
         }
-      }
-    });
+      }),
 
-    // Get pending payments
-    const pendingPayments = await prisma.payment.count({
-      where: {
-        userId,
-        status: 'PENDING'
-      }
-    });
+      // Get completed trips
+      prisma.booking.count({
+        where: {
+          userId,
+          status: 'ATTENDED'
+        }
+      }),
 
-    // Get total spent
-    const totalSpent = await prisma.payment.aggregate({
-      where: {
-        userId,
-        status: 'COMPLETED'
-      },
-      _sum: {
-        amount: true
-      }
-    });
+      // Get upcoming trips (business-date aware: any trip not yet departed, using absolute instant comparison)
+      prisma.booking.count({
+        where: {
+          userId,
+          status: 'CONFIRMED',
+          trip: {
+            departureTime: { gte: new Date() }
+          }
+        }
+      }),
+
+      // Get pending payments
+      prisma.payment.count({
+        where: {
+          userId,
+          status: 'PENDING'
+        }
+      }),
+
+      // Get total spent
+      prisma.payment.aggregate({
+        where: {
+          userId,
+          status: 'COMPLETED'
+        },
+        _sum: {
+          amount: true
+        }
+      })
+    ]);
 
     res.json({
       success: true,

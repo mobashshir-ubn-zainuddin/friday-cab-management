@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { userApi } from '@/services/api';
-import type { User } from '@/types';
+import type { User, ApproveUserResponse, BlockUserResponse, SetAdminResponse } from '@/types';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -15,6 +15,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { toast } from 'sonner';
+import { Textarea } from '@/components/ui/textarea';
 import {
   Users,
   Search,
@@ -31,6 +32,7 @@ import {
 } from 'lucide-react';
 import { formatDateIST } from '@/utils/timezone';
 import { Label } from '@/components/ui/label';
+import { useMutation } from '@/hooks/useMutation';
 
 const UserManagement = () => {
   const [users, setUsers] = useState<User[]>([]);
@@ -41,6 +43,29 @@ const UserManagement = () => {
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [actionType, setActionType] = useState<'block' | 'admin' | 'approve' | 'reject' | null>(null);
   const [rejectionReason, setRejectionReason] = useState('');
+
+  // Mutations with built-in concurrency protection
+  const approveMutation = useMutation<ApproveUserResponse, [string]>(async (userId: string) => {
+    return await userApi.approveUser(userId);
+  });
+
+  const rejectMutation = useMutation<void, [{ userId: string; reason: string }]>(async (params: { userId: string; reason: string }) => {
+    await userApi.rejectUser(params.userId, params.reason);
+  });
+
+  const blockMutation = useMutation<BlockUserResponse, [{ userId: string; isBlocked: boolean }]>(async (params: { userId: string; isBlocked: boolean }) => {
+    return await userApi.blockUser(params.userId, params.isBlocked);
+  });
+
+  const adminMutation = useMutation<SetAdminResponse, [{ userId: string; isAdmin: boolean }]>(async (params: { userId: string; isAdmin: boolean }) => {
+    return await userApi.setAdmin(params.userId, params.isAdmin);
+  });
+
+  const isAnyMutationPending = 
+    approveMutation.isPending || 
+    rejectMutation.isPending || 
+    blockMutation.isPending || 
+    adminMutation.isPending;
 
   useEffect(() => {
     fetchUsers();
@@ -53,8 +78,8 @@ const UserManagement = () => {
         limit: 10,
         search: search || undefined
       });
-      setUsers((data as any).users);
-      setTotalPages((data as any).pagination.totalPages);
+      setUsers(data.users);
+      setTotalPages(data.pagination.totalPages);
     } catch (error) {
       console.error('Error fetching users:', error);
       toast.error('Failed to load users');
@@ -63,46 +88,20 @@ const UserManagement = () => {
     }
   };
 
-  const handleBlockUser = async () => {
-    if (!selectedUser) return;
-
-    try {
-      await userApi.blockUser(selectedUser.id, !selectedUser.isBlocked);
-      toast.success(`User ${selectedUser.isBlocked ? 'unblocked' : 'blocked'} successfully`);
-      setSelectedUser(null);
-      setActionType(null);
-      fetchUsers();
-    } catch (error: any) {
-      const message = error.response?.data?.error || 'Failed to update user';
-      toast.error(message);
-    }
-  };
-
-  const handleSetAdmin = async () => {
-    if (!selectedUser) return;
-
-    try {
-      await userApi.setAdmin(selectedUser.id, !selectedUser.isAdmin);
-      toast.success(`Admin ${selectedUser.isAdmin ? 'removed from' : 'granted to'} user successfully`);
-      setSelectedUser(null);
-      setActionType(null);
-      fetchUsers();
-    } catch (error: any) {
-      const message = error.response?.data?.error || 'Failed to update user';
-      toast.error(message);
-    }
-  };
-
   const handleApproveUser = async () => {
     if (!selectedUser) return;
     try {
-      await userApi.approveUser(selectedUser.id);
-      toast.success(`User ${selectedUser.name} approved successfully`);
+      const data = await approveMutation.mutateAsync(selectedUser.id);
+      if (data?.emailStatus === 'already_sent') {
+        toast.info(`${selectedUser.name} is already approved. No action needed.`);
+      } else {
+        toast.success(`${selectedUser.name} has been approved. Sign-in link is being sent.`);
+      }
       setSelectedUser(null);
       setActionType(null);
       fetchUsers();
     } catch (error: any) {
-      const message = error.response?.data?.error || 'Failed to approve user';
+      const message = error?.message || 'Failed to approve user';
       toast.error(message);
     }
   };
@@ -110,14 +109,48 @@ const UserManagement = () => {
   const handleRejectUser = async () => {
     if (!selectedUser) return;
     try {
-      await userApi.rejectUser(selectedUser.id, rejectionReason);
-      toast.success(`User ${selectedUser.name} rejected successfully`);
+      await rejectMutation.mutateAsync({ userId: selectedUser.id, reason: rejectionReason });
+      toast.success(`${selectedUser.name}'s registration has been rejected and deleted.`);
       setSelectedUser(null);
       setActionType(null);
       setRejectionReason('');
       fetchUsers();
     } catch (error: any) {
-      const message = error.response?.data?.error || 'Failed to reject user';
+      const message = error?.message || 'Failed to reject user';
+      toast.error(message);
+    }
+  };
+
+  const handleBlockUser = async () => {
+    if (!selectedUser) return;
+    try {
+      await blockMutation.mutateAsync({ 
+        userId: selectedUser.id, 
+        isBlocked: !selectedUser.isBlocked 
+      });
+      toast.success(`User ${selectedUser.isBlocked ? 'unblocked' : 'blocked'} successfully`);
+      setSelectedUser(null);
+      setActionType(null);
+      fetchUsers();
+    } catch (error: any) {
+      const message = error?.message || 'Failed to update user';
+      toast.error(message);
+    }
+  };
+
+  const handleSetAdmin = async () => {
+    if (!selectedUser) return;
+    try {
+      await adminMutation.mutateAsync({ 
+        userId: selectedUser.id, 
+        isAdmin: !selectedUser.isAdmin 
+      });
+      toast.success(`Admin ${selectedUser.isAdmin ? 'removed from' : 'granted to'} user successfully`);
+      setSelectedUser(null);
+      setActionType(null);
+      fetchUsers();
+    } catch (error: any) {
+      const message = error?.message || 'Failed to update user';
       toast.error(message);
     }
   };
@@ -235,7 +268,8 @@ const UserManagement = () => {
                         setSelectedUser(user);
                         setActionType('approve');
                       }}
-                      className="border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10"
+                      disabled={isAnyMutationPending}
+                      className="border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10 disabled:opacity-50"
                     >
                       <UserCheck className="w-4 h-4 mr-1" />
                       Approve
@@ -249,7 +283,8 @@ const UserManagement = () => {
                         setSelectedUser(user);
                         setActionType('reject');
                       }}
-                      className="border-red-500/30 text-red-400 hover:bg-red-500/10"
+                      disabled={isAnyMutationPending}
+                      className="border-red-500/30 text-red-400 hover:bg-red-500/10 disabled:opacity-50"
                     >
                       <UserX className="w-4 h-4 mr-1" />
                       Reject & Delete
@@ -262,10 +297,10 @@ const UserManagement = () => {
                       setSelectedUser(user);
                       setActionType('admin');
                     }}
+                    disabled={isAnyMutationPending}
                     className={user.isAdmin
                       ? 'border-amber-500/30 text-amber-400 hover:bg-amber-500/10'
-                      : 'border-slate-700 text-slate-300 hover:bg-slate-800'
-                    }
+                      : 'border-slate-700 text-slate-300 hover:bg-slate-800'}
                   >
                     <Shield className="w-4 h-4 mr-1" />
                     {user.isAdmin ? 'Remove Admin' : 'Make Admin'}
@@ -277,10 +312,10 @@ const UserManagement = () => {
                       setSelectedUser(user);
                       setActionType('block');
                     }}
+                    disabled={isAnyMutationPending}
                     className={user.isBlocked
                       ? 'border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10'
-                      : 'border-red-500/30 text-red-400 hover:bg-red-500/10'
-                    }
+                      : 'border-red-500/30 text-red-400 hover:bg-red-500/10'}
                   >
                     {user.isBlocked ? (
                       <>
@@ -363,6 +398,19 @@ const UserManagement = () => {
             </DialogDescription>
           </DialogHeader>
 
+          {actionType === 'reject' && (
+            <div className="p-4 border-t border-slate-800">
+              <Label className="text-sm font-medium text-slate-300">Rejection Reason (Required)</Label>
+              <Textarea
+                value={rejectionReason}
+                onChange={(e) => setRejectionReason(e.target.value)}
+                placeholder="Enter reason for rejection..."
+                className="mt-2 bg-slate-800 border-slate-700 text-white"
+                rows={3}
+              />
+            </div>
+          )}
+
           <DialogFooter>
             <Button
               variant="outline"
@@ -371,6 +419,7 @@ const UserManagement = () => {
                 setActionType(null);
                 setRejectionReason('');
               }}
+              disabled={isAnyMutationPending}
               className="border-slate-700 text-slate-300 hover:bg-slate-800"
             >
               Cancel
@@ -382,14 +431,21 @@ const UserManagement = () => {
                 else if (actionType === 'approve') handleApproveUser();
                 else if (actionType === 'reject') handleRejectUser();
               }}
+              disabled={isAnyMutationPending || (actionType === 'reject' && !rejectionReason.trim())}
               className={actionType === 'block' && !selectedUser?.isBlocked
                 ? 'bg-red-500 hover:bg-red-600'
                 : actionType === 'reject'
                 ? 'bg-red-500 hover:bg-red-600'
-                : 'bg-amber-500 hover:bg-amber-600'
-              }
+                : 'bg-amber-500 hover:bg-amber-600'}
             >
-              Confirm
+              {isAnyMutationPending ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Processing...
+                </>
+              ) : (
+                'Confirm'
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>

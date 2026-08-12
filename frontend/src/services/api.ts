@@ -151,7 +151,7 @@ export const apiClient = {
 
 // Auth API
 export const authApi = {
-  syncUser: () => apiClient.post<{ user: any }>('/auth/sync-user'),
+  syncUser: () => apiClient.post<{ user: any }>('/auth/sync-user', undefined, { idempotencyKey: 'sync-user' }),
   getCurrentUser: () => apiClient.get('/auth/me'),
   logout: () => apiClient.post('/auth/logout'),
   signup: async (data: { emailPrefix: string; name: string; phone: string; rollNumber: string; department: string }) => {

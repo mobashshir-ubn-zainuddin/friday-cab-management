@@ -1,17 +1,10 @@
-import { PrismaClient, User } from '@prisma/client';
+import { PrismaClient, User, Prisma } from '@prisma/client';
 
 const prismaClientSingleton = () => {
   return new PrismaClient({
     log: process.env.NODE_ENV === 'development' 
       ? ['query', 'error', 'warn'] 
       : ['error'],
-    // Connection pool settings for Supabase PgBouncer
-    // PgBouncer works best with smaller pool sizes
-    datasources: {
-      db: {
-        url: process.env.DATABASE_URL,
-      },
-    },
   });
 };
 
@@ -29,6 +22,22 @@ prisma.$on('error' as never, (e: any) => {
 prisma.$on('warn' as never, (e: any) => {
   console.warn('[Prisma] Warning:', e.message || e);
 });
+
+// Add query timing middleware using Prisma middleware
+if (process.env.NODE_ENV === 'development') {
+  prisma.$use(async (params: Prisma.MiddlewareParams, next: (params: Prisma.MiddlewareParams) => Promise<any>) => {
+    const startTime = process.hrtime.bigint();
+    const result = await next(params);
+    const endTime = process.hrtime.bigint();
+    const durationMs = Number(endTime - startTime) / 1_000_000;
+    
+    if (durationMs > 100) {
+      console.log(`[Prisma Slow Query] ${params.model}.${params.action} - ${durationMs.toFixed(2)}ms`);
+    }
+    
+    return result;
+  });
+}
 
 if (process.env.NODE_ENV !== 'production') globalThis.prisma = prisma;
 

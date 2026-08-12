@@ -24,6 +24,7 @@ import analyticsRoutes from './routes/analytics';
 // Middleware
 import { clearUserCacheMiddleware } from './middleware/supabaseAuth';
 import { idempotencyMiddleware } from './middleware/idempotency';
+import { requestTimingMiddleware } from './middleware/requestTiming';
 
 const app = express();
 app.set('trust proxy', 1);
@@ -58,7 +59,7 @@ app.use(cors({
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin', 'Idempotency-Key'],
   exposedHeaders: ['Content-Length', 'X-Total-Count']
 }));
 
@@ -84,6 +85,9 @@ app.use(cookieParser());
 
 // Logging
 app.use(morgan('dev'));
+
+// Request timing middleware (must be early to measure full request)
+app.use(requestTimingMiddleware);
 
 // Request-scoped user cache clearing
 app.use(clearUserCacheMiddleware);
@@ -111,11 +115,38 @@ app.get("/healthz", (req, res) => {
   });
 });
 
+// Graceful shutdown
+async function gracefulShutdown(signal: string) {
+  console.log(`\n🛑 Received ${signal}, starting graceful shutdown...`);
+  
+  try {
+    await prisma.$disconnect();
+    console.log('✅ Prisma disconnected');
+  } catch (error) {
+    console.error('❌ Error disconnecting Prisma:', error);
+  }
+  
+  process.exit(0);
+}
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+
 // Server startup
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`📍 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`🔗 Frontend URL: ${FRONTEND_URL}`);
+});
+
+// Handle server errors
+server.on('error', (error: NodeJS.ErrnoException) => {
+  if (error.code === 'EADDRINUSE') {
+    console.error(`❌ Port ${PORT} is already in use`);
+  } else {
+    console.error('❌ Server error:', error);
+  }
+  process.exit(1);
 });
 
 export default app;

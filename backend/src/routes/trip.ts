@@ -156,6 +156,9 @@ const updateTripSchema = z.object({
 
 // Get all trips (with filters)
 router.get('/', authenticate, async (req: AuthenticatedRequest, res) => {
+  const requestId = (req as any).requestId || 'unknown';
+  const overallStart = process.hrtime.bigint();
+  
   try {
     const { 
       status, 
@@ -194,33 +197,38 @@ router.get('/', authenticate, async (req: AuthenticatedRequest, res) => {
       };
     }
 
-    const [trips, total] = await Promise.all([
-      prisma.trip.findMany({
-        where,
-        include: {
-          _count: {
-            select: { bookings: true }
-          },
-          bookings: {
-            where: { userId: req.user!.id },
-            select: { id: true, status: true }
-          },
-          cabs: {
-            select: {
-              id: true,
-              vehicleType: true,
-              vehicleNumber: true,
-              maxCapacity: true,
-              currentOccupancy: true
-            }
-          }
+    // Time the count query
+    const countStart = process.hrtime.bigint();
+    const total = await prisma.trip.count({ where });
+    const countMs = Number(process.hrtime.bigint() - countStart) / 1_000_000;
+
+    // Time the findMany query
+    const findStart = process.hrtime.bigint();
+    const trips = await prisma.trip.findMany({
+      where,
+      include: {
+        _count: {
+          select: { bookings: true }
         },
-        orderBy: { date: 'asc' },
-        skip,
-        take: limitNum
-      }),
-      prisma.trip.count({ where })
-    ]);
+        bookings: {
+          where: { userId: req.user!.id },
+          select: { id: true, status: true }
+        },
+        cabs: {
+          select: {
+            id: true,
+            vehicleType: true,
+            vehicleNumber: true,
+            maxCapacity: true,
+            currentOccupancy: true
+          }
+        }
+      },
+      orderBy: { date: 'asc' },
+      skip,
+      take: limitNum
+    });
+    const findMs = Number(process.hrtime.bigint() - findStart) / 1_000_000;
 
     // Add user booking status to each trip
     const tripsWithBookingStatus = trips.map(trip => ({
@@ -228,6 +236,13 @@ router.get('/', authenticate, async (req: AuthenticatedRequest, res) => {
       userBooking: trip.bookings.length > 0 ? trip.bookings[0] : null,
       bookings: undefined
     }));
+
+    const totalMs = Number(process.hrtime.bigint() - overallStart) / 1_000_000;
+    
+    // Log detailed timing for slow requests
+    if (totalMs > 500 || countMs > 200 || findMs > 300) {
+      console.log(`[Trip GET /] Request ${requestId} - Total: ${totalMs.toFixed(2)}ms, Count: ${countMs.toFixed(2)}ms, FindMany: ${findMs.toFixed(2)}ms, Trips: ${trips.length}, Page: ${pageNum}, Limit: ${limitNum}`);
+    }
 
     res.json({
       success: true,
@@ -242,7 +257,8 @@ router.get('/', authenticate, async (req: AuthenticatedRequest, res) => {
       }
     });
   } catch (error) {
-    console.error('Error fetching trips:', error);
+    const totalMs = Number(process.hrtime.bigint() - overallStart) / 1_000_000;
+    console.error(`[Trip GET /] Request ${requestId} failed after ${totalMs.toFixed(2)}ms:`, error);
     res.status(500).json({
       success: false,
       error: 'Failed to fetch trips'

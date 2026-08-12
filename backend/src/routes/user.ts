@@ -17,10 +17,14 @@ const updateUserSchema = z.object({
 
 // Get user dashboard stats
 router.get('/dashboard', authenticate, async (req: AuthenticatedRequest, res) => {
+  const requestId = (req as any).requestId || 'unknown';
+  const overallStart = process.hrtime.bigint();
+  
   try {
     const userId = req.user!.id;
 
     // Run all independent queries in parallel
+    const queryStart = process.hrtime.bigint();
     const [
       totalTrips,
       activeBookings,
@@ -86,6 +90,14 @@ router.get('/dashboard', authenticate, async (req: AuthenticatedRequest, res) =>
         }
       })
     ]);
+    const queryMs = Number(process.hrtime.bigint() - queryStart) / 1_000_000;
+
+    const totalMs = Number(process.hrtime.bigint() - overallStart) / 1_000_000;
+    
+    // Log detailed timing for slow requests
+    if (totalMs > 500 || queryMs > 300) {
+      console.log(`[User GET /dashboard] Request ${requestId} - Total: ${totalMs.toFixed(2)}ms, Queries: ${queryMs.toFixed(2)}ms`);
+    }
 
     res.json({
       success: true,
@@ -99,7 +111,8 @@ router.get('/dashboard', authenticate, async (req: AuthenticatedRequest, res) =>
       }
     });
   } catch (error) {
-    console.error('Error fetching dashboard stats:', error);
+    const totalMs = Number(process.hrtime.bigint() - overallStart) / 1_000_000;
+    console.error(`[User GET /dashboard] Request ${requestId} failed after ${totalMs.toFixed(2)}ms:`, error);
     res.status(500).json({
       success: false,
       error: 'Failed to fetch dashboard stats'

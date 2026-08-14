@@ -230,9 +230,7 @@ export const tripApi = {
   getById: (id: string) => apiClient.get(`/trips/${id}`),
   create: (data: any) => apiClient.post('/trips', data, { idempotencyKey: generateCreateIdempotencyKey(data) }),
   update: (id: string, data: any) => apiClient.patch(`/trips/${id}`, data, { idempotencyKey: generateIdempotencyKey(`update-trip-${id}`) }),
-  updateStatus: (id: string, status: string) => apiClient.patch(`/trips/${id}/status`, { status }, { idempotencyKey: generateIdempotencyKey(`trip-status-${id}`) }),
-  toggleBookingWindow: (id: string, action: 'open' | 'close') => 
-    apiClient.patch(`/trips/${id}/booking-window`, { action }, { idempotencyKey: generateIdempotencyKey(`trip-booking-window-${id}-${action}`) }),
+  cancel: (id: string) => apiClient.patch(`/trips/${id}/cancel`, undefined, { idempotencyKey: generateIdempotencyKey(`cancel-trip-${id}`) }),
   togglePaymentWindow: (id: string, action: 'open' | 'close', totalCost?: number) => 
     apiClient.patch(`/trips/${id}/payment-window`, { action, totalCost }, { idempotencyKey: generateIdempotencyKey(`trip-payment-window-${id}-${action}`) }),
   delete: (id: string) => apiClient.delete(`/trips/${id}`, { idempotencyKey: generateDeleteIdempotencyKey('trip', id) })

@@ -21,6 +21,8 @@ export interface User {
 // Trip types
 export type TripStatus = 'UPCOMING' | 'BOOKING_OPEN' | 'BOOKING_CLOSED' | 'CAB_ASSIGNED' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
 
+export type EffectiveTripStatus = TripStatus; // Computed from timestamps + cab assignments
+
 export interface Trip {
   id: string;
   title: string;
@@ -31,7 +33,8 @@ export interface Trip {
   cancellationDeadline?: string;
   departureTime: string;
   returnTime?: string;
-  status: TripStatus;
+  status: TripStatus; // Stored status (for CANCELLED mainly)
+  effectiveStatus?: EffectiveTripStatus; // Computed effective status
   totalCost?: number;
   costPerPerson?: number;
   maxBookings: number;

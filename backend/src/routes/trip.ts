@@ -21,6 +21,12 @@ import {
   formatForDatetimeLocalIST,
   isInvalidDate
 } from '../utils/timezone';
+import {
+  getEffectiveTripStatus,
+  isBookingCurrentlyOpen,
+  canUserCancelBooking,
+  EffectiveTripStatus
+} from '../utils/tripStatus';
 
 const router = Router();
 
@@ -174,6 +180,7 @@ router.get('/', authenticate, async (req: AuthenticatedRequest, res) => {
 
     const where: any = {};
     
+    // Filter by stored status if provided (for backward compatibility)
     if (status) {
       where.status = status as TripStatus;
     }
@@ -202,7 +209,7 @@ router.get('/', authenticate, async (req: AuthenticatedRequest, res) => {
     const total = await prisma.trip.count({ where });
     const countMs = Number(process.hrtime.bigint() - countStart) / 1_000_000;
 
-    // Time the findMany query
+    // Time the findMany query - include cabs with currentOccupancy for effective status calculation
     const findStart = process.hrtime.bigint();
     const trips = await prisma.trip.findMany({
       where,
@@ -230,10 +237,12 @@ router.get('/', authenticate, async (req: AuthenticatedRequest, res) => {
     });
     const findMs = Number(process.hrtime.bigint() - findStart) / 1_000_000;
 
-    // Add user booking status to each trip
+    const now = new Date();
+    // Add user booking status and effective status to each trip
     const tripsWithBookingStatus = trips.map(trip => ({
       ...trip,
       userBooking: trip.bookings.length > 0 ? trip.bookings[0] : null,
+      effectiveStatus: getEffectiveTripStatus(trip, now),
       bookings: undefined
     }));
 
@@ -344,6 +353,9 @@ router.get('/:id', authenticate, async (req: AuthenticatedRequest, res) => {
     // Check if user has booked this trip
     const userBooking = trip.bookings.find(b => b.userId === req.user!.id);
 
+    const now = new Date();
+    const effectiveStatus = getEffectiveTripStatus(trip, now);
+
     const totalMs = Number(process.hrtime.bigint() - overallStart) / 1_000_000;
     if (totalMs > 500) {
       console.log(`[Trip GET /:id] Request ${requestId} - Total: ${totalMs.toFixed(2)}ms, Trip: ${id}`);
@@ -354,7 +366,8 @@ router.get('/:id', authenticate, async (req: AuthenticatedRequest, res) => {
       data: {
         ...trip,
         bookings,
-        userBooking: userBooking || null
+        userBooking: userBooking || null,
+        effectiveStatus
       }
     });
   } catch (error) {
@@ -511,68 +524,72 @@ router.patch('/:id', authenticate, authorizeAdmin, validateBody(updateTripSchema
   }
 });
 
-// Update trip status (admin only)
-router.patch('/:id/status', authenticate, authorizeAdmin, async (req: AuthenticatedRequest, res) => {
+// Cancel trip (admin only)
+router.patch('/:id/cancel', authenticate, authorizeAdmin, async (req: AuthenticatedRequest, res) => {
   try {
     const { id } = req.params;
-    const { status } = req.body;
 
-    if (!status || !Object.values(TripStatus).includes(status)) {
-      return res.status(400).json({
+    const trip = await prisma.trip.findUnique({
+      where: { id },
+      include: {
+        bookings: {
+          where: { status: 'CONFIRMED' }
+        }
+      }
+    });
+
+    if (!trip) {
+      return res.status(404).json({
         success: false,
-        error: 'Invalid status'
+        error: 'Trip not found'
       });
     }
 
+    if (trip.status === 'CANCELLED') {
+      return res.status(400).json({
+        success: false,
+        error: 'Trip is already cancelled'
+      });
+    }
+
+    // Cancel all confirmed bookings for this trip
+    if (trip.bookings.length > 0) {
+      await prisma.booking.updateMany({
+        where: {
+          tripId: id,
+          status: 'CONFIRMED'
+        },
+        data: {
+          status: 'CANCELLED',
+          cancelledAt: new Date()
+        }
+      });
+
+      // Update trip booking count
+      await prisma.trip.update({
+        where: { id },
+        data: {
+          currentBookings: 0
+        }
+      });
+    }
+
+    // Update trip status to CANCELLED
     const updatedTrip = await prisma.trip.update({
       where: { id },
-      data: { status }
+      data: { status: 'CANCELLED' }
     });
 
     res.json({
       success: true,
       data: updatedTrip,
-      message: 'Trip status updated successfully'
+      message: 'Trip cancelled successfully'
     });
   } catch (error) {
-    console.error('Error updating trip status:', error);
+    console.error('Error cancelling trip:', error);
     res.status(500).json({
       success: false,
-      error: 'Failed to update trip status'
-    });
-  }
-});
-
-// Open/close booking window (admin only)
-router.patch('/:id/booking-window', authenticate, authorizeAdmin, async (req: AuthenticatedRequest, res) => {
-  try {
-    const { id } = req.params;
-    const { action } = req.body; // 'open' or 'close'
-
-    if (!action || !['open', 'close'].includes(action)) {
-      return res.status(400).json({
-        success: false,
-        error: 'Invalid action. Use "open" or "close"'
-      });
-    }
-
-    const newStatus = action === 'open' ? 'BOOKING_OPEN' : 'BOOKING_CLOSED';
-
-    const updatedTrip = await prisma.trip.update({
-      where: { id },
-      data: { status: newStatus }
-    });
-
-    res.json({
-      success: true,
-      data: updatedTrip,
-      message: `Booking window ${action}ed successfully`
-    });
-  } catch (error) {
-    console.error('Error updating booking window:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to update booking window'
+      error: 'Failed to cancel trip'
     });
   }
 });

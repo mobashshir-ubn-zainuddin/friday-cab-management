@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { tripApi, bookingApi } from '@/services/api';
-import type { Trip, TripStatus } from '@/types';
+import type { Trip, TripStatus, EffectiveTripStatus } from '@/types';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -88,8 +88,15 @@ const Trips = () => {
     }
   };
 
-  const getStatusBadge = (status: TripStatus) => {
-    const styles: Record<TripStatus, string> = {
+  const VALID_STATUSES: EffectiveTripStatus[] = ['UPCOMING', 'BOOKING_OPEN', 'BOOKING_CLOSED', 'CAB_ASSIGNED', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED'];
+
+  function isValidEffectiveStatus(status: string): status is EffectiveTripStatus {
+    return VALID_STATUSES.includes(status as EffectiveTripStatus);
+  }
+
+  const getStatusBadge = (status: EffectiveTripStatus | string) => {
+    const safeStatus = isValidEffectiveStatus(status) ? status : 'UPCOMING';
+    const styles: Record<EffectiveTripStatus, string> = {
       UPCOMING: 'bg-slate-500/10 text-slate-400 border-slate-500/30',
       BOOKING_OPEN: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30',
       BOOKING_CLOSED: 'bg-amber-500/10 text-amber-400 border-amber-500/30',
@@ -99,7 +106,7 @@ const Trips = () => {
       CANCELLED: 'bg-red-500/10 text-red-400 border-red-500/30'
     };
 
-    const labels: Record<TripStatus, string> = {
+    const labels: Record<EffectiveTripStatus, string> = {
       UPCOMING: 'Upcoming',
       BOOKING_OPEN: 'Booking Open',
       BOOKING_CLOSED: 'Booking Closed',
@@ -110,17 +117,15 @@ const Trips = () => {
     };
 
     return (
-      <Badge variant="outline" className={styles[status]}>
-        {labels[status]}
+      <Badge variant="outline" className={styles[safeStatus]}>
+        {labels[safeStatus]}
       </Badge>
     );
   };
 
   const isBookingOpen = (trip: Trip) => {
-    return (
-      (trip.status === 'BOOKING_OPEN' || trip.status === 'UPCOMING') &&
-      isNowBetween(trip.bookingStartTime, trip.bookingEndTime)
-    );
+    const effectiveStatus = trip.effectiveStatus || trip.status;
+    return effectiveStatus === 'BOOKING_OPEN';
   };
 
   const formatDate = (dateString: string) => formatLongDateIST(dateString) || '';
@@ -189,7 +194,7 @@ const Trips = () => {
                         <h3 className="text-lg font-semibold text-white">{trip.title}</h3>
                         <p className="text-slate-400 text-sm mt-1">{trip.description}</p>
                       </div>
-                      {getStatusBadge(trip.status)}
+                      {getStatusBadge(trip.effectiveStatus || trip.status)}
                     </div>
 
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mt-4">

@@ -28,6 +28,7 @@ router.get('/dashboard', authenticate, authorizeAdmin, async (req: Authenticated
   try {
     const today = istNowStartOfDay();
     const monthStart = istNowStartOfMonth();
+    const now = new Date();
 
     const [
       totalUsers,
@@ -51,10 +52,11 @@ router.get('/dashboard', authenticate, authorizeAdmin, async (req: Authenticated
         _sum: { amount: true }
       }),
       
-      // Active trips (upcoming or in progress)
+      // Active trips: not cancelled, not completed (departure in future or no return time but departure in future)
       prisma.trip.count({
         where: {
-          status: { in: ['UPCOMING', 'BOOKING_OPEN', 'BOOKING_CLOSED', 'CAB_ASSIGNED', 'IN_PROGRESS'] }
+          status: { not: 'CANCELLED' },
+          departureTime: { gte: now }
         }
       }),
       
@@ -324,12 +326,6 @@ router.post('/trips/:tripId/auto-assign', authenticate, authorizeAdmin, async (r
       seatNumber++;
       currentCab.currentOccupancy++;
     }
-
-    // Update trip status
-    await prisma.trip.update({
-      where: { id: tripId },
-      data: { status: 'CAB_ASSIGNED' }
-    });
 
     res.json({
       success: true,

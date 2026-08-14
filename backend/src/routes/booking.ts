@@ -5,6 +5,7 @@ import { authenticate, checkPendingPayments, checkBlockedStatus } from '../middl
 import { validateBody } from '../middleware/validation';
 import { AuthenticatedRequest } from '../types';
 import { sendBookingConfirmation } from '../utils/email';
+import { isBookingCurrentlyOpen, canUserCancelBooking } from '../utils/tripStatus';
 
 const router = Router();
 
@@ -182,20 +183,26 @@ router.post('/', authenticate, checkBlockedStatus, checkPendingPayments, validat
       });
     }
 
-    // Check booking window
+    // Check booking window using time-based logic (not status field)
     const now = new Date();
-    if (now < trip.bookingStartTime || now > trip.bookingEndTime) {
+    if (!isBookingCurrentlyOpen(trip, now)) {
+      if (now < trip.bookingStartTime) {
+        return res.status(400).json({
+          success: false,
+          error: 'Booking has not started yet'
+        });
+      }
       return res.status(400).json({
         success: false,
-        error: `Booking window is closed. (Current: ${now.toISOString()}, Start: ${trip.bookingStartTime.toISOString()})`
+        error: 'Booking window has closed'
       });
     }
 
-    // Allow booking if trip is BOOKING_OPEN OR UPCOMING (within time window)
-    if (trip.status !== 'BOOKING_OPEN' && trip.status !== 'UPCOMING') {
+    // Check if trip is cancelled
+    if (trip.status === 'CANCELLED') {
       return res.status(400).json({
         success: false,
-        error: `Booking is not open for this trip (Status: ${trip.status})`
+        error: 'Cannot book a cancelled trip'
       });
     }
 
@@ -304,16 +311,23 @@ router.patch('/:id/cancel', authenticate, async (req: AuthenticatedRequest, res)
       });
     }
 
-    // Check cancellation deadline
-    if (booking.trip.cancellationDeadline && new Date() > booking.trip.cancellationDeadline) {
+    // Check if trip is cancelled
+    if (booking.trip.status === 'CANCELLED') {
       return res.status(400).json({
         success: false,
-        error: 'Cancellation deadline has passed'
+        error: 'Cannot cancel booking for a cancelled trip'
       });
     }
 
-    // Check if trip has already started
-    if (new Date() > booking.trip.departureTime) {
+    // Check if user can cancel (uses cancellationDeadline and departureTime)
+    const now = new Date();
+    if (!canUserCancelBooking(booking.trip, now)) {
+      if (booking.trip.cancellationDeadline && now > booking.trip.cancellationDeadline) {
+        return res.status(400).json({
+          success: false,
+          error: 'Cancellation deadline has passed'
+        });
+      }
       return res.status(400).json({
         success: false,
         error: 'Cannot cancel after trip departure'

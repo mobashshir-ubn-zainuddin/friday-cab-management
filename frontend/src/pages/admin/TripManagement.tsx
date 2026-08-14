@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { tripApi } from '@/services/api';
-import type { Trip, TripStatus } from '@/types';
+import type { Trip, TripStatus, EffectiveTripStatus } from '@/types';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -16,13 +16,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { toast } from 'sonner';
 import {
   Plus,
@@ -32,9 +25,8 @@ import {
   Car,
   Edit,
   Trash2,
-  Play,
-  Square,
-  CreditCard,
+  AlertTriangle,
+  XCircle,
   ArrowRight
 } from 'lucide-react';
 import {
@@ -50,11 +42,13 @@ const TripManagement = () => {
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [editingTrip, setEditingTrip] = useState<Trip | null>(null);
   const [deletingTrip, setDeletingTrip] = useState<Trip | null>(null);
+  const [deletingTripId, setDeletingTripId] = useState<string | null>(null);
   const [viewingBookingsTrip, setViewingBookingsTrip] = useState<Trip | null>(null);
   const [tripBookings, setTripBookings] = useState<any[]>([]);
   const [loadingBookings, setLoadingBookings] = useState(false);
   const [creatingTrip, setCreatingTrip] = useState(false);
-  const [deletingTripId, setDeletingTripId] = useState<string | null>(null);
+  const [cancellingTrip, setCancellingTrip] = useState<Trip | null>(null);
+  const [cancellingTripId, setCancellingTripId] = useState<string | null>(null);
   const [formData, setFormData] = useState({
     title: '',
     description: '',
@@ -141,20 +135,22 @@ const TripManagement = () => {
     }
   };
 
-  const handleToggleBookingWindow = async (trip: Trip, action: 'open' | 'close') => {
-    const tripId = trip.id;
-    const newStatus = action === 'open' ? 'BOOKING_OPEN' : 'BOOKING_CLOSED';
-    // Optimistic update
-    setTrips(prev => prev.map(t => t.id === tripId ? { ...t, status: newStatus as any } : t));
+  const handleCancel = async () => {
+    if (!cancellingTrip || cancellingTripId) return;
+    const tripId = cancellingTrip.id;
+    setCancellingTripId(tripId);
     
     try {
-      await tripApi.toggleBookingWindow(tripId, action);
-      toast.success(`Booking window ${action}ed successfully`);
+      await tripApi.cancel(tripId);
+      // Optimistic update: update the trip status locally
+      setTrips(prev => prev.map(t => t.id === tripId ? { ...t, status: 'CANCELLED' as any } : t));
+      toast.success('Trip cancelled successfully');
+      setCancellingTrip(null);
     } catch (error: any) {
-      // Rollback on error
-      setTrips(prev => prev.map(t => t.id === tripId ? { ...t, status: trip.status } : t));
-      const message = error.response?.data?.error || `Failed to ${action} booking window`;
+      const message = error.response?.data?.error || 'Failed to cancel trip';
       toast.error(message);
+    } finally {
+      setCancellingTripId(null);
     }
   };
 
@@ -169,17 +165,6 @@ const TripManagement = () => {
       toast.error('Failed to load bookings');
     } finally {
       setLoadingBookings(false);
-    }
-  };
-
-  const handleUpdateStatus = async (id: string, status: TripStatus) => {
-    try {
-      await tripApi.updateStatus(id, status);
-      toast.success(`Trip status updated to ${status.replace('_', ' ')}`);
-      fetchTrips();
-    } catch (error: any) {
-      const message = error.response?.data?.error || 'Failed to update trip status';
-      toast.error(message);
     }
   };
 
@@ -213,8 +198,15 @@ const TripManagement = () => {
     });
   };
 
-  const getStatusBadge = (status: TripStatus) => {
-    const styles: Record<TripStatus, string> = {
+  const VALID_STATUSES: EffectiveTripStatus[] = ['UPCOMING', 'BOOKING_OPEN', 'BOOKING_CLOSED', 'CAB_ASSIGNED', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED'];
+
+  function isValidEffectiveStatus(status: string): status is EffectiveTripStatus {
+    return VALID_STATUSES.includes(status as EffectiveTripStatus);
+  }
+
+  const getStatusBadge = (status: EffectiveTripStatus | string) => {
+    const safeStatus = isValidEffectiveStatus(status) ? status : 'UPCOMING';
+    const styles: Record<EffectiveTripStatus, string> = {
       UPCOMING: 'bg-slate-500/10 text-slate-400 border-slate-500/30',
       BOOKING_OPEN: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30',
       BOOKING_CLOSED: 'bg-amber-500/10 text-amber-400 border-amber-500/30',
@@ -225,8 +217,8 @@ const TripManagement = () => {
     };
 
     return (
-      <Badge variant="outline" className={styles[status]}>
-        {status.replace('_', ' ')}
+      <Badge variant="outline" className={styles[safeStatus]}>
+        {safeStatus.replace('_', ' ')}
       </Badge>
     );
   };
@@ -266,119 +258,93 @@ const TripManagement = () => {
 
       {/* Trips List */}
       <div className="grid gap-4">
-        {trips.map((trip) => (
-          <Card key={trip.id} className="bg-slate-900 border-slate-800">
-            <CardContent className="p-6">
-              <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-                <div className="flex-1">
-                  <div className="flex items-center gap-3 flex-wrap">
-                    <h3 className="text-lg font-semibold text-white">{trip.title}</h3>
-                    {getStatusBadge(trip.status)}
+{trips.map((trip) => {
+          const effectiveStatus = trip.effectiveStatus || trip.status;
+          return (
+            <Card key={trip.id} className="bg-slate-900 border-slate-800">
+              <CardContent className="p-6">
+                <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <h3 className="text-lg font-semibold text-white">{trip.title}</h3>
+                      {getStatusBadge(effectiveStatus)}
+                    </div>
+                    
+                    <div className="flex items-center gap-4 mt-2 text-sm text-slate-400 flex-wrap">
+                      <span className="flex items-center gap-1">
+                        <Calendar className="w-4 h-4" />
+                        {formatDate(trip.date)}
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <Clock className="w-4 h-4" />
+                        {formatTime(trip.departureTime)}
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <Users className="w-4 h-4" />
+                        {trip.currentBookings}/{trip.maxBookings}
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <Car className="w-4 h-4" />
+                        {trip.cabs?.length || 0} vehicles
+                      </span>
+                    </div>
                   </div>
-                  
-                  <div className="flex items-center gap-4 mt-2 text-sm text-slate-400 flex-wrap">
-                    <span className="flex items-center gap-1">
-                      <Calendar className="w-4 h-4" />
-                      {formatDate(trip.date)}
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <Clock className="w-4 h-4" />
-                      {formatTime(trip.departureTime)}
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <Users className="w-4 h-4" />
-                      {trip.currentBookings}/{trip.maxBookings}
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <Car className="w-4 h-4" />
-                      {trip.cabs?.length || 0} vehicles
-                    </span>
-                  </div>
-                </div>
 
-                <div className="flex items-center gap-2 flex-wrap">
-                  {trip.status !== 'COMPLETED' && trip.status !== 'CANCELLED' && (
-                    <Select
-                      value={trip.status}
-                      onValueChange={(value: TripStatus) => handleUpdateStatus(trip.id, value)}
-                    >
-                      <SelectTrigger className="w-[150px] bg-slate-800 border-slate-700 text-white h-9">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent className="bg-slate-800 border-slate-700">
-                        <SelectItem value="UPCOMING">Upcoming</SelectItem>
-                        <SelectItem value="BOOKING_OPEN">Booking Open</SelectItem>
-                        <SelectItem value="BOOKING_CLOSED">Booking Closed</SelectItem>
-                        <SelectItem value="CAB_ASSIGNED">Cab Assigned</SelectItem>
-                        <SelectItem value="IN_PROGRESS">In Progress</SelectItem>
-                        <SelectItem value="COMPLETED">Completed</SelectItem>
-                        <SelectItem value="CANCELLED">Cancelled</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  )}
-                  {trip.status === 'BOOKING_OPEN' && (
+                  <div className="flex items-center gap-2 flex-wrap">
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => handleToggleBookingWindow(trip, 'close')}
-                      className="border-amber-500/30 text-amber-400 hover:bg-amber-500/10"
+                      asChild
+                      className="border-slate-700 text-slate-300 hover:bg-slate-800"
                     >
-                      <Square className="w-4 h-4 mr-1" />
-                      Close Booking
+                      <Link to={`/admin/trips/${trip.id}/cabs`}>
+                        <Car className="w-4 h-4 mr-1" />
+                        Cabs
+                      </Link>
                     </Button>
-                  )}
-                  {trip.status === 'BOOKING_CLOSED' && (
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => handleToggleBookingWindow(trip, 'open')}
-                      className="border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10"
+                      onClick={() => handleViewBookings(trip)}
+                      className="border-slate-700 text-slate-300 hover:bg-slate-800"
                     >
-                      <Play className="w-4 h-4 mr-1" />
-                      Open Booking
+                      <Users className="w-4 h-4 mr-1" />
+                      Bookings
                     </Button>
-                  )}
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    asChild
-                    className="border-slate-700 text-slate-300 hover:bg-slate-800"
-                  >
-                    <Link to={`/admin/trips/${trip.id}/cabs`}>
-                      <Car className="w-4 h-4 mr-1" />
-                      Cabs
-                    </Link>
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => handleViewBookings(trip)}
-                    className="border-slate-700 text-slate-300 hover:bg-slate-800"
-                  >
-                    <Users className="w-4 h-4 mr-1" />
-                    Bookings
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => openEditDialog(trip)}
-                    className="border-slate-700 text-slate-300 hover:bg-slate-800"
-                  >
-                    <Edit className="w-4 h-4" />
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setDeletingTrip(trip)}
-                    className="border-red-500/30 text-red-400 hover:bg-red-500/10"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => openEditDialog(trip)}
+                      className="border-slate-700 text-slate-300 hover:bg-slate-800"
+                    >
+                      <Edit className="w-4 h-4" />
+                    </Button>
+                    {effectiveStatus !== 'CANCELLED' && effectiveStatus !== 'COMPLETED' && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setCancellingTrip(trip)}
+                        className="border-red-500/30 text-red-400 hover:bg-red-500/10"
+                        disabled={cancellingTripId === trip.id}
+                      >
+                        <XCircle className="w-4 h-4 mr-1" />
+                        Cancel Trip
+                      </Button>
+                    )}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setDeletingTrip(trip)}
+                      className="border-red-500/30 text-red-400 hover:bg-red-500/10"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
+                  </div>
                 </div>
-              </div>
             </CardContent>
           </Card>
-        ))}
+        );
+      })}
       </div>
 
       {/* Create/Edit Dialog */}
@@ -542,6 +508,36 @@ const TripManagement = () => {
               disabled={deletingTripId !== null}
             >
               {deletingTripId ? 'Deleting...' : 'Delete Trip'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Cancel Trip Dialog */}
+      <Dialog open={!!cancellingTrip} onOpenChange={() => setCancellingTrip(null)}>
+        <DialogContent className="bg-slate-900 border-slate-800 text-white">
+          <DialogHeader>
+            <DialogTitle>Cancel Trip</DialogTitle>
+            <DialogDescription className="text-slate-400">
+              Are you sure you want to cancel this trip? This action cannot be undone. Existing bookings will be cancelled.
+            </DialogDescription>
+          </DialogHeader>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setCancellingTrip(null)}
+              className="border-slate-700 text-slate-300 hover:bg-slate-800"
+              disabled={cancellingTripId !== null}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleCancel}
+              variant="destructive"
+              disabled={cancellingTripId !== null}
+            >
+              {cancellingTripId ? 'Cancelling...' : 'Cancel Trip'}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -1,4 +1,4 @@
-# Friday Cab Management System
+# Cab Management System
 
 A production-oriented full-stack cab booking and management platform designed for IIT Kharagpur students.
 
@@ -50,19 +50,18 @@ The application is designed with a strong focus on:
 
 # Overview
 
-The Friday Cab Management System provides two primary interfaces:
+The Cab Management System provides two primary interfaces:
 
 ### Student/User Portal
 
 Students can:
 
-- Browse available Friday prayer trips
+- Browse available trips
 - Book available trips
 - View booking status
 - Track cab assignments
 - View attendance/payment status
 - Complete post-trip payments
-- Manage their profile
 
 ### Admin Panel
 

@@ -200,9 +200,9 @@ const PaymentControl = () => {
 
   const formatDate = (dateString: string) => formatDateIST(dateString) || '';
 
+  const pendingAndProcessingPayments = pendingPayments.filter(p => p.status === 'PENDING' || p.status === 'PROCESSING');
   const completedPayments = pendingPayments.filter(p => p.status === 'COMPLETED');
-  const totalPending = pendingPayments
-    .filter(p => p.status === 'PENDING')
+  const totalPending = pendingAndProcessingPayments
     .reduce((sum, p) => sum + p.amount, 0);
 
   const getPaymentStatusBadge = (status: string | undefined) => {
@@ -273,7 +273,7 @@ const PaymentControl = () => {
               </div>
               <div>
                 <p className="text-slate-400 text-sm">Pending Payments</p>
-                <p className="text-2xl font-bold text-white">{pendingPayments.filter(p => p.status === 'PENDING').length}</p>
+                <p className="text-2xl font-bold text-white">{pendingAndProcessingPayments.length}</p>
               </div>
             </div>
           </CardContent>

@@ -60,9 +60,9 @@ router.get('/dashboard', authenticate, authorizeAdmin, async (req: Authenticated
         }
       }),
       
-      // Pending payments
+      // Pending payments (include PROCESSING - Razorpay order created but payment not completed)
       prisma.payment.count({
-        where: { status: 'PENDING' }
+        where: { status: { in: ['PENDING', 'PROCESSING'] } }
       }),
       
       // Today's bookings
@@ -482,7 +482,7 @@ router.delete('/assignments/:id', authenticate, authorizeAdmin, async (req: Auth
 router.get('/payments/pending-summary', authenticate, authorizeAdmin, async (req: AuthenticatedRequest, res) => {
   try {
     const pendingPayments = await prisma.payment.findMany({
-      where: { status: 'PENDING' },
+      where: { status: { in: ['PENDING', 'PROCESSING'] } },
       include: {
         user: {
           select: {
@@ -626,7 +626,7 @@ router.get('/trips/:tripId/bookings-for-payment', authenticate, authorizeAdmin, 
 
     const totalAttendees = attendees.length;
     const paidCount = attendees.filter(a => a.payment?.status === 'COMPLETED').length;
-    const pendingCount = attendees.filter(a => a.payment?.status === 'PENDING').length;
+    const pendingCount = attendees.filter(a => a.payment?.status === 'PENDING' || a.payment?.status === 'PROCESSING').length;
     const failedCount = attendees.filter(a => a.payment?.status === 'FAILED').length;
     const noPaymentCount = attendees.filter(a => !a.payment).length;
 

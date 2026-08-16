@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { bookingApi } from '@/services/api';
+import { bookingApi, paymentApi } from '@/services/api';
 import type { Booking, BookingStatus } from '@/types';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -35,14 +35,33 @@ import {
   isBeforeNowInIST
 } from '@/utils/timezone';
 
+// Razorpay script loader
+const loadRazorpayScript = (): Promise<boolean> => {
+  return new Promise((resolve) => {
+    if (document.getElementById('razorpay-script')) {
+      resolve(true);
+      return;
+    }
+
+    const script = document.createElement('script');
+    script.id = 'razorpay-script';
+    script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+    script.onload = () => resolve(true);
+    script.onerror = () => resolve(false);
+    document.body.appendChild(script);
+  });
+};
+
 const MyBookings = () => {
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [loading, setLoading] = useState(true);
   const [cancellingBooking, setCancellingBooking] = useState<Booking | null>(null);
   const [cancelLoading, setCancelLoading] = useState(false);
+  const [processingPayment, setProcessingPayment] = useState<string | null>(null);
 
   useEffect(() => {
     fetchBookings();
+    loadRazorpayScript();
   }, []);
 
   const fetchBookings = async () => {
@@ -54,6 +73,93 @@ const MyBookings = () => {
       toast.error('Failed to load bookings');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handlePayNow = async (payment: any, tripTitle: string, tripId: string) => {
+    setProcessingPayment(payment.id);
+    
+    try {
+      // Create order
+      const orderData = await paymentApi.createOrder(tripId);
+      
+      // Initialize Razorpay
+      const options = {
+        key: (orderData as any).keyId,
+        amount: (orderData as any).amount,
+        currency: (orderData as any).currency,
+        name: 'Friday Cab System',
+        description: `Payment for ${tripTitle}`,
+        order_id: (orderData as any).orderId,
+        config: {
+          display: {
+            blocks: {
+              upi: {
+                name: 'Pay via UPI',
+                instruments: [
+                  {
+                    method: 'upi'
+                  }
+                ]
+              }
+            },
+            sequence: ['block.upi'],
+            preferences: {
+              show_default_blocks: false
+            }
+          }
+        },
+        handler: async (response: any) => {
+          try {
+            // Verify payment
+            await paymentApi.verify({
+              razorpayOrderId: response.razorpay_order_id,
+              razorpayPaymentId: response.razorpay_payment_id,
+              razorpaySignature: response.razorpay_signature
+            });
+            
+            // Optimistic update: mark payment as completed
+            setBookings(prev => prev.map(b => 
+              b.payment?.id === payment.id 
+                ? { ...b, payment: { ...b.payment!, status: 'COMPLETED' as const, razorpayPaymentId: response.razorpay_payment_id, paidAt: new Date().toISOString() } }
+                : b
+            ));
+            toast.success('Payment successful!');
+          } catch (error) {
+            console.error('Payment verification failed:', error);
+            toast.error('Payment verification failed. Please contact support.');
+          }
+        },
+        prefill: {
+          name: tripTitle,
+          email: '',
+          contact: ''
+        },
+        theme: {
+          color: '#10b981'
+        },
+        modal: {
+          ondismiss: async () => {
+            setProcessingPayment(null);
+            // Reset payment status if user cancelled checkout
+            try {
+              await paymentApi.reset(tripId);
+              // Refresh bookings to get updated status
+              fetchBookings();
+            } catch (error) {
+              console.error('Failed to reset payment:', error);
+            }
+          }
+        }
+      };
+
+      const razorpay = new (window as any).Razorpay(options);
+      razorpay.open();
+    } catch (error: any) {
+      const message = error.response?.data?.error || 'Failed to initiate payment';
+      toast.error(message);
+    } finally {
+      setProcessingPayment(null);
     }
   };
 
@@ -400,17 +506,28 @@ const MyBookings = () => {
                   <p className="text-xl font-bold text-white">₹{booking.payment.amount}</p>
                 </div>
                 <div className="flex items-center gap-3">
-                  {booking.payment.status === 'PENDING' ? (
-                    <Button asChild className="bg-emerald-500 hover:bg-emerald-600">
-                      <Link to="/payments">
-                        Pay Now
-                        <ArrowRight className="w-4 h-4 ml-2" />
-                      </Link>
+                  {booking.payment.status === 'PENDING' || booking.payment.status === 'PROCESSING' ? (
+                    <Button
+                      onClick={() => handlePayNow(booking.payment, booking.trip.title, booking.tripId)}
+                      disabled={processingPayment === booking.payment.id}
+                      className="bg-emerald-500 hover:bg-emerald-600"
+                    >
+                      {processingPayment === booking.payment.id ? 'Processing...' : 'Pay Now'}
+                      {!processingPayment && <ArrowRight className="w-4 h-4 ml-2" />}
                     </Button>
-                  ) : (
+                  ) : booking.payment.status === 'COMPLETED' ? (
                     <Badge variant="outline" className="bg-emerald-500/10 text-emerald-400 border-emerald-500/30">
                       <CheckCircle className="w-4 h-4 mr-1" />
                       Paid
+                    </Badge>
+                  ) : booking.payment.status === 'FAILED' ? (
+                    <Badge variant="outline" className="bg-red-500/10 text-red-400 border-red-500/30">
+                      <XCircle className="w-4 h-4 mr-1" />
+                      Failed
+                    </Badge>
+                  ) : (
+                    <Badge variant="outline" className="bg-slate-500/10 text-slate-400 border-slate-500/30">
+                      {booking.payment.status}
                     </Badge>
                   )}
                 </div>

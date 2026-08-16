@@ -19,6 +19,10 @@ const verifyPaymentSchema = z.object({
   razorpaySignature: z.string()
 });
 
+const resetPaymentSchema = z.object({
+  tripId: z.string().uuid('Invalid trip ID')
+});
+
 // Get user's payments
 router.get('/my-payments', authenticate, async (req: AuthenticatedRequest, res) => {
   const requestId = (req as any).requestId || 'unknown';
@@ -134,12 +138,13 @@ router.post('/create-order', authenticate, validateBody(createPaymentSchema), as
     const { tripId } = req.body;
     const userId = req.user!.id;
 
-    // Find the payment record
+    // Find the payment record - check both PENDING and PROCESSING statuses
+    // PROCESSING means a Razorpay order was created but payment wasn't completed (user cancelled checkout)
     const payment = await prisma.payment.findFirst({
       where: {
         userId,
         tripId,
-        status: 'PENDING'
+        status: { in: ['PENDING', 'PROCESSING'] }
       },
       include: {
         trip: true
@@ -161,32 +166,46 @@ router.post('/create-order', authenticate, validateBody(createPaymentSchema), as
       });
     }
 
-    // Create Razorpay order
-    const order = await createOrder(
-      payment.amount,
-      payment.id.substring(0, 30), // Shorten receipt ID to max 40 chars
-      {
-        paymentId: payment.id,
-        userId,
-        tripId
-      }
-    );
+    let orderId = payment.razorpayOrderId;
 
-    // Update payment with order ID
-    await prisma.payment.update({
-      where: { id: payment.id },
-      data: {
-        razorpayOrderId: order.id,
-        status: 'PROCESSING'
-      }
-    });
+    // If payment is in PROCESSING but has no order ID, or if we want to create a fresh order
+    // Create a new Razorpay order if no existing order ID
+    if (!orderId) {
+      const order = await createOrder(
+        payment.amount,
+        payment.id.substring(0, 30), // Shorten receipt ID to max 40 chars
+        {
+          paymentId: payment.id,
+          userId,
+          tripId
+        }
+      );
+      orderId = order.id;
+
+      // Update payment with order ID
+      await prisma.payment.update({
+        where: { id: payment.id },
+        data: {
+          razorpayOrderId: orderId,
+          status: 'PROCESSING'
+        }
+      });
+    } else {
+      // Reuse existing order - just ensure status is PROCESSING
+      await prisma.payment.update({
+        where: { id: payment.id },
+        data: {
+          status: 'PROCESSING'
+        }
+      });
+    }
 
     res.json({
       success: true,
       data: {
-        orderId: order.id,
-        amount: order.amount,
-        currency: order.currency,
+        orderId,
+        amount: Math.round(payment.amount * 100), // Return amount in paise for frontend
+        currency: 'INR',
         keyId: process.env.RAZORPAY_KEY_ID
       }
     });
@@ -248,6 +267,54 @@ router.post('/verify', authenticate, validateBody(verifyPaymentSchema), async (r
     res.status(500).json({
       success: false,
       error: 'Failed to verify payment'
+    });
+  }
+});
+
+// Reset payment status from PROCESSING back to PENDING (for cancelled/abandoned checkout)
+router.post('/reset', authenticate, validateBody(resetPaymentSchema), async (req: AuthenticatedRequest, res) => {
+  try {
+    const { tripId } = req.body;
+    const userId = req.user!.id;
+
+    // Find the payment record that's in PROCESSING state
+    const payment = await prisma.payment.findFirst({
+      where: {
+        userId,
+        tripId,
+        status: 'PROCESSING'
+      },
+      include: {
+        trip: true
+      }
+    });
+
+    if (!payment) {
+      return res.status(404).json({
+        success: false,
+        error: 'No processing payment found to reset'
+      });
+    }
+
+    // Reset payment status back to PENDING and clear razorpayOrderId
+    const updatedPayment = await prisma.payment.update({
+      where: { id: payment.id },
+      data: {
+        status: 'PENDING',
+        razorpayOrderId: null
+      }
+    });
+
+    res.json({
+      success: true,
+      data: updatedPayment,
+      message: 'Payment reset to pending successfully'
+    });
+  } catch (error) {
+    console.error('Error resetting payment:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to reset payment'
     });
   }
 });

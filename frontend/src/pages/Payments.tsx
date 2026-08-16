@@ -120,8 +120,16 @@ const Payments = () => {
           color: '#10b981'
         },
         modal: {
-          ondismiss: () => {
+          ondismiss: async () => {
             setProcessingPayment(null);
+            // Reset payment status if user cancelled checkout
+            try {
+              await paymentApi.reset(payment.tripId);
+              // Refresh payments to get updated status
+              fetchPayments();
+            } catch (error) {
+              console.error('Failed to reset payment:', error);
+            }
           }
         }
       };
@@ -165,7 +173,7 @@ const Payments = () => {
     return formatDateIST(dateString) || 'N/A';
   };
 
-  const pendingPayments = payments.filter(p => p.status === 'PENDING');
+  const pendingPayments = payments.filter(p => p.status === 'PENDING' || p.status === 'PROCESSING');
   const completedPayments = payments.filter(p => p.status === 'COMPLETED');
   const totalPending = pendingPayments.reduce((sum, p) => sum + p.amount, 0);
   const totalPaid = completedPayments.reduce((sum, p) => sum + p.amount, 0);

@@ -51,12 +51,15 @@ const PaymentControl = () => {
       ]);
       
       // Show trips that are COMPLETED or IN_PROGRESS or have bookings
-      setTrips((tripsData as any).trips.filter((t: any) => 
-        t.status === 'COMPLETED' || 
-        t.status === 'IN_PROGRESS' || 
-        t.status === 'CAB_ASSIGNED' ||
-        t.paymentWindowOpen
-      ));
+      // Use effectiveStatus as fallback since it's computed from time-based logic
+      // and now the persisted status should be in sync
+      setTrips((tripsData as any).trips.filter((t: any) => {
+        const status = t.effectiveStatus || t.status;
+        return status === 'COMPLETED' || 
+               status === 'IN_PROGRESS' || 
+               status === 'CAB_ASSIGNED' ||
+               t.paymentWindowOpen;
+      }));
       setPendingPayments((pendingData as any).pendingPayments || []);
     } catch (error) {
       console.error('Error fetching data:', error);

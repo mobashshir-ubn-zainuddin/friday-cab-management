@@ -174,3 +174,114 @@ export function getTripStatusStyle(status: EffectiveTripStatus): string {
   };
   return styles[status];
 }
+
+/**
+ * Synchronizes trip statuses in the database based on current time.
+ * This ensures the persisted Trip.status matches the time-based effective status.
+ * 
+ * Rules:
+ * - CANCELLED trips are never auto-updated (explicit admin action)
+ * - Only updates status if it actually changes
+ * - Auto-opens payment window for COMPLETED trips with attended bookings
+ * - Returns count of updated trips
+ */
+export async function syncTripStatuses(prisma: any): Promise<number> {
+  const now = new Date();
+  let updatedCount = 0;
+
+  // Fetch all non-cancelled trips with their cabs and bookings for effective status calculation
+  const trips = await prisma.trip.findMany({
+    where: {
+      status: { not: 'CANCELLED' }
+    },
+    include: {
+      cabs: {
+        select: { currentOccupancy: true }
+      },
+      bookings: {
+        where: {
+          status: { in: ['CONFIRMED', 'ATTENDED'] },
+          attended: true
+        },
+        select: { id: true }
+      }
+    }
+  });
+
+  for (const trip of trips) {
+    const effectiveStatus = getEffectiveTripStatus(trip, now);
+    
+    // Only update if the persisted status differs from effective status
+    if (trip.status !== effectiveStatus) {
+      const updateData: any = { status: effectiveStatus };
+      
+      // If trip just became COMPLETED and payment window isn't open, auto-open it
+      // but only if there are attended bookings
+      if (effectiveStatus === 'COMPLETED' && 
+          !trip.paymentWindowOpen && 
+          trip.bookings.length > 0) {
+        updateData.paymentWindowOpen = true;
+      }
+      
+      await prisma.trip.update({
+        where: { id: trip.id },
+        data: updateData
+      });
+      updatedCount++;
+    }
+  }
+
+  if (updatedCount > 0) {
+    console.log(`[syncTripStatuses] Updated ${updatedCount} trip statuses at ${now.toISOString()}`);
+  }
+
+  return updatedCount;
+}
+
+/**
+ * Synchronizes a single trip's status.
+ * Useful when a specific trip's time has passed and we need fresh status immediately.
+ */
+export async function syncSingleTripStatus(prisma: any, tripId: string): Promise<EffectiveTripStatus | null> {
+  const trip = await prisma.trip.findUnique({
+    where: { id: tripId },
+    include: {
+      cabs: {
+        select: { currentOccupancy: true }
+      },
+      bookings: {
+        where: {
+          status: { in: ['CONFIRMED', 'ATTENDED'] },
+          attended: true
+        },
+        select: { id: true }
+      }
+    }
+  });
+
+  if (!trip) {
+    return null;
+  }
+
+  const now = new Date();
+  const effectiveStatus = getEffectiveTripStatus(trip, now);
+
+  if (trip.status !== effectiveStatus && trip.status !== 'CANCELLED') {
+    const updateData: any = { status: effectiveStatus };
+    
+    // If trip just became COMPLETED and payment window isn't open, auto-open it
+    if (effectiveStatus === 'COMPLETED' && 
+        !trip.paymentWindowOpen && 
+        trip.bookings.length > 0) {
+      updateData.paymentWindowOpen = true;
+    }
+    
+    await prisma.trip.update({
+      where: { id: tripId },
+      data: updateData
+    });
+    console.log(`[syncSingleTripStatus] Trip ${tripId} status updated: ${trip.status} -> ${effectiveStatus}`);
+  }
+
+  return effectiveStatus;
+}

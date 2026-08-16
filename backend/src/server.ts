@@ -10,6 +10,7 @@ import cookieParser from 'cookie-parser';
 import rateLimit from 'express-rate-limit';
 
 import { prisma } from './utils/prisma';
+import { syncTripStatuses } from './utils/tripStatus';
 
 // Import routes
 import authRoutes from './routes/auth';
@@ -27,6 +28,17 @@ import { idempotencyMiddleware } from './middleware/idempotency';
 import { requestTimingMiddleware } from './middleware/requestTiming';
 
 const app = express();
+
+// Background job: Sync trip statuses every minute
+const TRIP_STATUS_SYNC_INTERVAL = 60 * 1000; // 1 minute
+setInterval(async () => {
+  try {
+    await syncTripStatuses(prisma);
+  } catch (error) {
+    console.error('[Background Job] Error syncing trip statuses:', error);
+  }
+}, TRIP_STATUS_SYNC_INTERVAL);
+console.log(`[Background Job] Trip status sync scheduled every ${TRIP_STATUS_SYNC_INTERVAL / 1000} seconds`);
 app.set('trust proxy', 1);
 
 const PORT = process.env.PORT || 5000;

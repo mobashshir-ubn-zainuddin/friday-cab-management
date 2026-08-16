@@ -103,11 +103,13 @@ const MyBookings = () => {
   };
 
   const getTimelineSteps = (booking: Booking) => {
+    // Use effectiveStatus if available, fallback to persisted status
+    const tripStatus = (booking.trip as any).effectiveStatus || booking.trip.status;
     const steps = [
       { label: 'Booked', completed: true, icon: Ticket },
-      { label: 'Booking Closed', completed: booking.trip.status !== 'BOOKING_OPEN', icon: XCircle },
+      { label: 'Booking Closed', completed: tripStatus !== 'BOOKING_OPEN', icon: XCircle },
       { label: 'Cab Assigned', completed: !!booking.cabAssignment, icon: Car },
-      { label: 'Trip Completed', completed: booking.trip.status === 'COMPLETED', icon: CheckCircle },
+      { label: 'Trip Completed', completed: tripStatus === 'COMPLETED', icon: CheckCircle },
       { 
         label: booking.payment?.status === 'COMPLETED' ? 'Paid' : 'Payment Pending', 
         completed: booking.payment?.status === 'COMPLETED', 
@@ -122,7 +124,8 @@ const MyBookings = () => {
 
   const canCancel = (booking: Booking) => {
     if (booking.status !== 'CONFIRMED') return false;
-    if (booking.trip.status === 'COMPLETED') return false;
+    const tripStatus = (booking.trip as any).effectiveStatus || booking.trip.status;
+    if (tripStatus === 'COMPLETED') return false;
     if (booking.trip.cancellationDeadline) {
       return isBeforeNowInIST(booking.trip.cancellationDeadline) === false;
     }
@@ -143,14 +146,16 @@ const MyBookings = () => {
   }
 
   // Separate active and past bookings
-  const activeBookings = bookings.filter(b => 
-    b.status === 'CONFIRMED' && 
-    !['COMPLETED', 'CANCELLED'].includes(b.trip.status)
-  );
-  const pastBookings = bookings.filter(b => 
-    b.status !== 'CONFIRMED' || 
-    ['COMPLETED', 'CANCELLED'].includes(b.trip.status)
-  );
+  const activeBookings = bookings.filter(b => {
+    const tripStatus = (b.trip as any).effectiveStatus || b.trip.status;
+    return b.status === 'CONFIRMED' && 
+      !['COMPLETED', 'CANCELLED'].includes(tripStatus);
+  });
+  const pastBookings = bookings.filter(b => {
+    const tripStatus = (b.trip as any).effectiveStatus || b.trip.status;
+    return b.status !== 'CONFIRMED' || 
+      ['COMPLETED', 'CANCELLED'].includes(tripStatus);
+  });
 
   return (
     <div className="space-y-6">

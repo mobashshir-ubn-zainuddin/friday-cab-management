@@ -18,6 +18,12 @@ interface RazorpayWebhookPayload {
         id: string;
       };
     };
+    refund?: {
+      entity: {
+        id: string;
+        payment_id: string;
+      };
+    };
   };
 }
 
@@ -105,6 +111,11 @@ router.post('/', async (req: Request, res: Response) => {
         }
         break;
       }
+      case 'payment.authorized': {
+        // Payment authorized but not captured (manual capture mode)
+        // We don't mark as completed until captured
+        break;
+      }
       case 'order.paid': {
         const orderId = event.payload.order?.entity.id;
         const paymentId = event.payload.payment?.entity.id;
@@ -117,6 +128,22 @@ router.post('/', async (req: Request, res: Response) => {
         const paymentEntity = event.payload.payment?.entity;
         if (paymentEntity?.order_id && paymentEntity.id) {
           await failPayment(paymentEntity.order_id, paymentEntity.id);
+        }
+        break;
+      }
+      case 'refund.created': {
+        const refundEntity = event.payload.refund?.entity;
+        if (refundEntity?.payment_id) {
+          // Find payment by razorpayPaymentId
+          const payment = await prisma.payment.findFirst({
+            where: { razorpayPaymentId: refundEntity.payment_id }
+          });
+          if (payment && payment.status !== 'REFUNDED') {
+            await prisma.payment.update({
+              where: { id: payment.id },
+              data: { status: 'REFUNDED' }
+            });
+          }
         }
         break;
       }

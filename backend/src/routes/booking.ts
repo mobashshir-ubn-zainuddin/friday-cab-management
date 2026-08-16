@@ -5,7 +5,7 @@ import { authenticate, checkPendingPayments, checkBlockedStatus } from '../middl
 import { validateBody } from '../middleware/validation';
 import { AuthenticatedRequest } from '../types';
 import { sendBookingConfirmation } from '../utils/email';
-import { isBookingCurrentlyOpen, canUserCancelBooking } from '../utils/tripStatus';
+import { isBookingCurrentlyOpen, canUserCancelBooking, getEffectiveTripStatus } from '../utils/tripStatus';
 
 const router = Router();
 
@@ -39,16 +39,12 @@ router.get('/my-bookings', authenticate, async (req: AuthenticatedRequest, res) 
         where,
         include: {
           trip: {
-            select: {
-              id: true,
-              title: true,
-              date: true,
-              departureTime: true,
-              returnTime: true,
-              status: true,
-              totalCost: true,
-              costPerPerson: true,
-              paymentWindowOpen: true
+            include: {
+              cabs: {
+                select: {
+                  currentOccupancy: true
+                }
+              }
             }
           },
           payment: {
@@ -84,10 +80,19 @@ router.get('/my-bookings', authenticate, async (req: AuthenticatedRequest, res) 
       console.log(`[Booking GET /my-bookings] Request ${requestId} - Total: ${totalMs.toFixed(2)}ms`);
     }
 
+    const now = new Date();
+    const bookingsWithEffectiveStatus = bookings.map(booking => ({
+      ...booking,
+      trip: {
+        ...booking.trip,
+        effectiveStatus: getEffectiveTripStatus(booking.trip, now)
+      }
+    }));
+
     res.json({
       success: true,
       data: {
-        bookings,
+        bookings: bookingsWithEffectiveStatus,
         pagination: {
           page: pageNum,
           limit: limitNum,
@@ -152,9 +157,18 @@ router.get('/:id', authenticate, async (req: AuthenticatedRequest, res) => {
       });
     }
 
+    const now = new Date();
+    const bookingWithEffectiveStatus = {
+      ...booking,
+      trip: {
+        ...booking.trip,
+        effectiveStatus: getEffectiveTripStatus(booking.trip, now)
+      }
+    };
+
     res.json({
       success: true,
-      data: booking
+      data: bookingWithEffectiveStatus
     });
   } catch (error) {
     console.error('Error fetching booking:', error);

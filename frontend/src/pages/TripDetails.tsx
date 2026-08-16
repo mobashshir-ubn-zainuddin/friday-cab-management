@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { tripApi, bookingApi } from '@/services/api';
-import type { Trip } from '@/types';
+import type { Trip, EffectiveTripStatus } from '@/types';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -82,9 +82,14 @@ const TripDetails = () => {
   const formatDate = (dateString: string) => formatLongDateIST(dateString) || '';
   const formatTime = (dateString: string) => formatTimeIST(dateString) || '';
 
+  const getEffectiveStatus = (trip: Trip): EffectiveTripStatus => {
+    return (trip as any).effectiveStatus || trip.status;
+  };
+
   const isBookingOpen = (trip: Trip) => {
+    const effectiveStatus = getEffectiveStatus(trip);
     return (
-      trip.status === 'BOOKING_OPEN' &&
+      effectiveStatus === 'BOOKING_OPEN' &&
       isNowBetween(trip.bookingStartTime, trip.bookingEndTime)
     );
   };
@@ -294,13 +299,21 @@ const TripDetails = () => {
             <CardContent>
               <Badge 
                 variant="outline" 
-                className={`
-                  ${trip.status === 'BOOKING_OPEN' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' : ''}
-                  ${trip.status === 'BOOKING_CLOSED' ? 'bg-amber-500/10 text-amber-400 border-amber-500/30' : ''}
-                  ${trip.status === 'COMPLETED' ? 'bg-slate-500/10 text-slate-400 border-slate-500/30' : ''}
-                `}
+                className={(() => {
+                  const effectiveStatus = getEffectiveStatus(trip);
+                  const styles: Record<EffectiveTripStatus, string> = {
+                    UPCOMING: 'bg-slate-500/10 text-slate-400 border-slate-500/30',
+                    BOOKING_OPEN: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30',
+                    BOOKING_CLOSED: 'bg-amber-500/10 text-amber-400 border-amber-500/30',
+                    CAB_ASSIGNED: 'bg-blue-500/10 text-blue-400 border-blue-500/30',
+                    IN_PROGRESS: 'bg-purple-500/10 text-purple-400 border-purple-500/30',
+                    COMPLETED: 'bg-slate-500/10 text-slate-400 border-slate-500/30',
+                    CANCELLED: 'bg-red-500/10 text-red-400 border-red-500/30'
+                  };
+                  return styles[effectiveStatus];
+                })()}
               >
-                {trip.status.replace('_', ' ')}
+                {getEffectiveStatus(trip).replace('_', ' ')}
               </Badge>
 
               {trip.costPerPerson && (

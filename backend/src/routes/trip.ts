@@ -25,6 +25,8 @@ import {
   getEffectiveTripStatus,
   isBookingCurrentlyOpen,
   canUserCancelBooking,
+  syncTripStatuses,
+  syncSingleTripStatus,
   EffectiveTripStatus
 } from '../utils/tripStatus';
 
@@ -166,6 +168,9 @@ router.get('/', authenticate, async (req: AuthenticatedRequest, res) => {
   const overallStart = process.hrtime.bigint();
   
   try {
+    // Sync trip statuses before querying to ensure database status is up-to-date
+    await syncTripStatuses(prisma);
+
     const { 
       status, 
       upcoming, 
@@ -239,6 +244,7 @@ router.get('/', authenticate, async (req: AuthenticatedRequest, res) => {
 
     const now = new Date();
     // Add user booking status and effective status to each trip
+    // Now that we've synced, effectiveStatus should match the persisted status for non-cancelled trips
     const tripsWithBookingStatus = trips.map(trip => ({
       ...trip,
       userBooking: trip.bookings.length > 0 ? trip.bookings[0] : null,
@@ -283,6 +289,9 @@ router.get('/:id', authenticate, async (req: AuthenticatedRequest, res) => {
   try {
     const { id } = req.params;
     const isAdmin = req.user!.isAdmin;
+
+    // Sync this specific trip's status before fetching
+    await syncSingleTripStatus(prisma, id);
 
     const trip = await prisma.trip.findUnique({
       where: { id },
@@ -607,6 +616,9 @@ router.patch('/:id/payment-window', authenticate, authorizeAdmin, async (req: Au
       });
     }
 
+    // Sync trip status first to ensure we have the latest status
+    await syncSingleTripStatus(prisma, id);
+
     const trip = await prisma.trip.findUnique({
       where: { id },
       include: {
@@ -626,6 +638,8 @@ router.patch('/:id/payment-window', authenticate, authorizeAdmin, async (req: Au
       });
     }
 
+    // If trip is completed but payment window is being opened without totalCost,
+    // we should still allow it but require totalCost for payment record creation
     let updateData: any = {
       paymentWindowOpen: action === 'open'
     };

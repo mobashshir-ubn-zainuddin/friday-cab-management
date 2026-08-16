@@ -619,16 +619,16 @@ router.patch('/:id/payment-window', authenticate, authorizeAdmin, async (req: Au
     // Sync trip status first to ensure we have the latest status
     await syncSingleTripStatus(prisma, id);
 
-    const trip = await prisma.trip.findUnique({
-      where: { id },
-      include: {
-        bookings: {
-          where: {
-            status: { in: ['CONFIRMED', 'ATTENDED'] },
-            attended: true
-          }
-        }
+    // Get all eligible bookings for this trip (CONFIRMED or ATTENDED, not CANCELLED/NO_SHOW)
+    const eligibleBookings = await prisma.booking.findMany({
+      where: {
+        tripId: id,
+        status: { in: ['CONFIRMED', 'ATTENDED'] }
       }
+    });
+
+    const trip = await prisma.trip.findUnique({
+      where: { id }
     });
 
     if (!trip) {
@@ -638,24 +638,22 @@ router.patch('/:id/payment-window', authenticate, authorizeAdmin, async (req: Au
       });
     }
 
-    // If trip is completed but payment window is being opened without totalCost,
-    // we should still allow it but require totalCost for payment record creation
+    // If opening payment window without totalCost, just toggle the window
+    // Admin can enter totalCost later
     let updateData: any = {
       paymentWindowOpen: action === 'open'
     };
 
-    // If opening payment window, calculate cost per person
+    // If opening payment window with totalCost, calculate cost per person and create payment records
     if (action === 'open' && totalCost) {
-      const attendedBookings = trip.bookings.filter(b => b.attended).length;
-      
-      if (attendedBookings === 0) {
+      if (eligibleBookings.length === 0) {
         return res.status(400).json({
           success: false,
-          error: 'No attendees found for this trip'
+          error: 'No eligible bookings found for this trip'
         });
       }
 
-      const costPerPerson = totalCost / attendedBookings;
+      const costPerPerson = totalCost / eligibleBookings.length;
       updateData.totalCost = totalCost;
       updateData.costPerPerson = costPerPerson;
     }
@@ -665,12 +663,10 @@ router.patch('/:id/payment-window', authenticate, authorizeAdmin, async (req: Au
       data: updateData
     });
 
-    // If opening payment window, create payment records
+    // If opening payment window with totalCost, create payment records for all eligible bookings
     if (action === 'open' && totalCost) {
-      const attendedBookings = trip.bookings.filter(b => b.attended);
-      
       await prisma.payment.createMany({
-        data: attendedBookings.map(booking => ({
+        data: eligibleBookings.map(booking => ({
           userId: booking.userId,
           tripId: id,
           bookingId: booking.id,
@@ -680,6 +676,9 @@ router.patch('/:id/payment-window', authenticate, authorizeAdmin, async (req: Au
         skipDuplicates: true
       });
     }
+
+    // If closing payment window, we might want to clean up PENDING payments that were never paid
+    // But for now, we just close the window - payments remain for tracking
 
     res.json({
       success: true,

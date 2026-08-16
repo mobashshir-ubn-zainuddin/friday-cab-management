@@ -105,17 +105,26 @@ const MyBookings = () => {
   const getTimelineSteps = (booking: Booking) => {
     // Use effectiveStatus if available, fallback to persisted status
     const tripStatus = (booking.trip as any).effectiveStatus || booking.trip.status;
+    // Only show payment step if trip is completed AND payment record exists
+    const hasPaymentRecord = !!booking.payment;
+    const paymentCompleted = booking.payment?.status === 'COMPLETED';
+    
     const steps = [
       { label: 'Booked', completed: true, icon: Ticket },
       { label: 'Booking Closed', completed: tripStatus !== 'BOOKING_OPEN', icon: XCircle },
       { label: 'Cab Assigned', completed: !!booking.cabAssignment, icon: Car },
       { label: 'Trip Completed', completed: tripStatus === 'COMPLETED', icon: CheckCircle },
-      { 
-        label: booking.payment?.status === 'COMPLETED' ? 'Paid' : 'Payment Pending', 
-        completed: booking.payment?.status === 'COMPLETED', 
-        icon: CreditCard 
-      }
     ];
+    
+    // Only add payment step if trip is completed and payment record exists
+    if (tripStatus === 'COMPLETED' && hasPaymentRecord) {
+      steps.push({ 
+        label: paymentCompleted ? 'Paid' : 'Payment Pending', 
+        completed: paymentCompleted, 
+        icon: CreditCard 
+      });
+    }
+    
     return steps;
   };
 
@@ -382,8 +391,8 @@ const MyBookings = () => {
             </div>
           )}
 
-          {/* Payment Info */}
-          {booking.payment && (
+          {/* Payment Info - Only show if trip is completed AND payment record exists */}
+          {(booking.trip.status === 'COMPLETED' || (booking.trip as any).effectiveStatus === 'COMPLETED') && booking.payment && (
             <div className="mt-6 pt-6 border-t border-slate-800">
               <div className="flex items-center justify-between">
                 <div>

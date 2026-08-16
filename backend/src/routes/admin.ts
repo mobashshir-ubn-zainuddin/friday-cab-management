@@ -522,4 +522,135 @@ router.get('/payments/pending-summary', authenticate, authorizeAdmin, async (req
   }
 });
 
+// Get trip bookings for payment control (admin)
+// Returns all eligible bookings with their payment status
+router.get('/trips/:tripId/bookings-for-payment', authenticate, authorizeAdmin, async (req: AuthenticatedRequest, res) => {
+  try {
+    const { tripId } = req.params;
+
+    const trip = await prisma.trip.findUnique({
+      where: { id: tripId },
+      select: {
+        id: true,
+        title: true,
+        date: true,
+        totalCost: true,
+        costPerPerson: true,
+        paymentWindowOpen: true,
+        status: true
+      }
+    });
+
+    if (!trip) {
+      return res.status(404).json({
+        success: false,
+        error: 'Trip not found'
+      });
+    }
+
+    // Get all eligible bookings (CONFIRMED or ATTENDED)
+    const bookings = await prisma.booking.findMany({
+      where: {
+        tripId,
+        status: { in: ['CONFIRMED', 'ATTENDED'] }
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            rollNumber: true,
+            phone: true,
+            department: true
+          }
+        },
+        payment: {
+          select: {
+            id: true,
+            amount: true,
+            status: true,
+            razorpayOrderId: true,
+            razorpayPaymentId: true,
+            paidAt: true
+          }
+        },
+        cabAssignment: {
+          select: {
+            seatNumber: true,
+            cab: {
+              select: {
+                vehicleType: true,
+                vehicleNumber: true
+              }
+            }
+          }
+        }
+      },
+      orderBy: { createdAt: 'asc' }
+    });
+
+    // Also get all payments for this trip (including completed/failed)
+    const allPayments = await prisma.payment.findMany({
+      where: { tripId },
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true
+          }
+        }
+      }
+    });
+
+    // Map payments by bookingId for quick lookup
+    const paymentsByBooking = new Map(allPayments.map(p => [p.bookingId, p]));
+
+    const attendees = bookings.map(booking => {
+      const payment = paymentsByBooking.get(booking.id) || null;
+      return {
+        bookingId: booking.id,
+        user: booking.user,
+        attended: booking.attended,
+        cabAssignment: booking.cabAssignment,
+        payment: payment ? {
+          id: payment.id,
+          amount: payment.amount,
+          status: payment.status,
+          razorpayOrderId: payment.razorpayOrderId,
+          razorpayPaymentId: payment.razorpayPaymentId,
+          paidAt: payment.paidAt
+        } : null
+      };
+    });
+
+    const totalAttendees = attendees.length;
+    const paidCount = attendees.filter(a => a.payment?.status === 'COMPLETED').length;
+    const pendingCount = attendees.filter(a => a.payment?.status === 'PENDING').length;
+    const failedCount = attendees.filter(a => a.payment?.status === 'FAILED').length;
+    const noPaymentCount = attendees.filter(a => !a.payment).length;
+
+    res.json({
+      success: true,
+      data: {
+        trip,
+        attendees,
+        summary: {
+          totalAttendees,
+          paidCount,
+          pendingCount,
+          failedCount,
+          noPaymentCount
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching trip bookings for payment:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch trip bookings for payment'
+    });
+  }
+});
+
 export default router;

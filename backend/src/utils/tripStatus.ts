@@ -182,14 +182,14 @@ export function getTripStatusStyle(status: EffectiveTripStatus): string {
  * Rules:
  * - CANCELLED trips are never auto-updated (explicit admin action)
  * - Only updates status if it actually changes
- * - Auto-opens payment window for COMPLETED trips with attended bookings
+ * - Does NOT auto-open payment window - that requires admin action with total cost
  * - Returns count of updated trips
  */
 export async function syncTripStatuses(prisma: any): Promise<number> {
   const now = new Date();
   let updatedCount = 0;
 
-  // Fetch all non-cancelled trips with their cabs and bookings for effective status calculation
+  // Fetch all non-cancelled trips with their cabs for effective status calculation
   const trips = await prisma.trip.findMany({
     where: {
       status: { not: 'CANCELLED' }
@@ -197,13 +197,6 @@ export async function syncTripStatuses(prisma: any): Promise<number> {
     include: {
       cabs: {
         select: { currentOccupancy: true }
-      },
-      bookings: {
-        where: {
-          status: { in: ['CONFIRMED', 'ATTENDED'] },
-          attended: true
-        },
-        select: { id: true }
       }
     }
   });
@@ -213,19 +206,9 @@ export async function syncTripStatuses(prisma: any): Promise<number> {
     
     // Only update if the persisted status differs from effective status
     if (trip.status !== effectiveStatus) {
-      const updateData: any = { status: effectiveStatus };
-      
-      // If trip just became COMPLETED and payment window isn't open, auto-open it
-      // but only if there are attended bookings
-      if (effectiveStatus === 'COMPLETED' && 
-          !trip.paymentWindowOpen && 
-          trip.bookings.length > 0) {
-        updateData.paymentWindowOpen = true;
-      }
-      
       await prisma.trip.update({
         where: { id: trip.id },
-        data: updateData
+        data: { status: effectiveStatus }
       });
       updatedCount++;
     }
@@ -248,13 +231,6 @@ export async function syncSingleTripStatus(prisma: any, tripId: string): Promise
     include: {
       cabs: {
         select: { currentOccupancy: true }
-      },
-      bookings: {
-        where: {
-          status: { in: ['CONFIRMED', 'ATTENDED'] },
-          attended: true
-        },
-        select: { id: true }
       }
     }
   });
@@ -267,18 +243,9 @@ export async function syncSingleTripStatus(prisma: any, tripId: string): Promise
   const effectiveStatus = getEffectiveTripStatus(trip, now);
 
   if (trip.status !== effectiveStatus && trip.status !== 'CANCELLED') {
-    const updateData: any = { status: effectiveStatus };
-    
-    // If trip just became COMPLETED and payment window isn't open, auto-open it
-    if (effectiveStatus === 'COMPLETED' && 
-        !trip.paymentWindowOpen && 
-        trip.bookings.length > 0) {
-      updateData.paymentWindowOpen = true;
-    }
-    
     await prisma.trip.update({
       where: { id: tripId },
-      data: updateData
+      data: { status: effectiveStatus }
     });
     console.log(`[syncSingleTripStatus] Trip ${tripId} status updated: ${trip.status} -> ${effectiveStatus}`);
   }

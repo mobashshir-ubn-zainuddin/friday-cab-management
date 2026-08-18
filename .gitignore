@@ -47,3 +47,6 @@ logs/
 
 # CACHE
 .cache/
+
+# Graphify generated/cache files
+.graphify-out/

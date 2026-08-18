@@ -1,4 +1,5 @@
-import React, { Component, ErrorInfo, ReactNode } from 'react';
+import { Component } from 'react';
+import type { ErrorInfo, ReactNode } from 'react';
 
 interface Props {
   children: ReactNode;
@@ -29,7 +30,7 @@ class ErrorBoundary extends Component<Props, State> {
 
   public render() {
     if (this.state.hasError) {
-      const isDev = process.env.NODE_ENV === 'development';
+      const isDev = import.meta.env.DEV;
       return (
         <div className="min-h-screen flex items-center justify-center bg-slate-950 p-4">
           <div className="text-center text-white max-w-2xl">

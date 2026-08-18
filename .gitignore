@@ -49,4 +49,4 @@ logs/
 .cache/
 
 # Graphify generated/cache files
-.graphify-out/
+graphify-out/

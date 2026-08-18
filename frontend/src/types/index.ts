@@ -181,6 +181,7 @@ export interface ApiResponse<T = any> {
   error?: string;
   message?: string;
   alreadyExisted?: boolean;
+  needsAdminApproval?: boolean;
 }
 
 export interface PaginatedResponse<T> {

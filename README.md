@@ -2,7 +2,7 @@
 
 A production-oriented full-stack cab booking and management platform designed for IIT Kharagpur students.
 
-The system manages the complete lifecycle of Friday prayer cab trips — from trip creation and student booking to cab allocation, attendance, post-trip payment collection, email notifications, and administrative analytics.
+The system manages the complete lifecycle of prayer cab trips — from trip creation and student booking to cab allocation, attendance, post-trip payment collection, email notifications, and administrative analytics.
 
 The application is designed with a strong focus on:
 

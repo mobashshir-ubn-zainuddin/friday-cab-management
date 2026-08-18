@@ -58,7 +58,7 @@ const AdminLayout = () => {
               </div>
               <div>
                 <span className="text-white font-semibold text-lg">Admin Panel</span>
-                <p className="text-xs text-slate-400">Friday Cab System</p>
+                <p className="text-xs text-slate-400">Cab Management System</p>
               </div>
             </Link>
           </div>

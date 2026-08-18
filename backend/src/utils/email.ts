@@ -50,7 +50,7 @@ export const verifyEmailConnection = async (): Promise<boolean> => {
 export const sendEmail = async (options: EmailOptions): Promise<EmailSendResult> => {
   try {
     const result = await resend.emails.send({
-      from: `"Friday Cab System" <${RESEND_FROM_EMAIL}>`,
+      from: `"Cab Management System" <${RESEND_FROM_EMAIL}>`,
       to: Array.isArray(options.to) ? options.to : [options.to],
       subject: options.subject,
       html: options.html,
@@ -127,7 +127,7 @@ export const sendTripNotification = async (
       <div class="container">
         <div class="header">
           <h1>🚗 New Trip Available!</h1>
-          <p>Friday Cab Management System</p>
+          <p>Cab Management System</p>
         </div>
         <div class="content">
           <h2>${tripData.title}</h2>
@@ -157,7 +157,7 @@ export const sendTripNotification = async (
           </center>
         </div>
         <div class="footer">
-          <p>This is an automated message from Friday Cab Management System</p>
+          <p>This is an automated message from Cab Management System</p>
           <p>IIT Kharagpur</p>
         </div>
       </div>
@@ -200,7 +200,7 @@ export const sendPaymentReminder = async (
       <div class="container">
         <div class="header">
           <h1>💳 Payment Reminder</h1>
-          <p>Friday Cab Management System</p>
+          <p>Cab Management System</p>
         </div>
         <div class="content">
           <h2>Your payment is pending</h2>
@@ -227,7 +227,7 @@ export const sendPaymentReminder = async (
 
   return sendEmail({
     to,
-    subject: '💳 Payment Reminder - Friday Cab System',
+    subject: '💳 Payment Reminder - Cab Management System',
     html
   });
 };
@@ -263,7 +263,7 @@ export const sendBookingConfirmation = async (
       <div class="container">
         <div class="header">
           <h1>✅ Booking Confirmed!</h1>
-          <p>Friday Cab Management System</p>
+          <p>Cab Management System</p>
         </div>
         <div class="content">
           <div class="success-icon">🎉</div>
@@ -290,7 +290,7 @@ export const sendBookingConfirmation = async (
 
   return sendEmail({
     to,
-    subject: '✅ Booking Confirmed - Friday Cab System',
+    subject: '✅ Booking Confirmed - Cab Management System',
     html
   });
 };
@@ -335,11 +335,11 @@ export const sendNewRegistrationToAdmins = async (
       <div class="container">
         <div class="header">
           <h1>🔔 New User Registration</h1>
-          <p>Friday Cab Management System — Admin Action Required</p>
+          <p>Cab Management System — Admin Action Required</p>
         </div>
         <div class="content">
           <p>Hi Admin,</p>
-          <p>A new user has registered on the Friday Cab portal and is waiting for your verification.
+          <p>A new user has registered on the Cab portal and is waiting for your verification.
           <strong> Do NOT send a sign-in link to the user until you have reviewed and approved their details.</strong></p>
 
           <h3>Submitted Details</h3>
@@ -362,7 +362,7 @@ export const sendNewRegistrationToAdmins = async (
           </center>
         </div>
         <div class="footer">
-          <p>This is an automated message from Friday Cab Management System · IIT Kharagpur</p>
+          <p>This is an automated message from Cab Management System · IIT Kharagpur</p>
         </div>
       </div>
     </body>

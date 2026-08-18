@@ -106,8 +106,8 @@ const Login = () => {
                 <Car className="w-7 h-7 text-white" />
               </div>
               <div>
-                <h1 className="text-3xl font-bold text-white">Friday Cab</h1>
-                <p className="text-slate-400">Management System</p>
+                <h1 className="text-3xl font-bold text-white">Cab Management</h1>
+                <p className="text-slate-400">System</p>
               </div>
             </div>
             <p className="text-slate-400 text-lg">

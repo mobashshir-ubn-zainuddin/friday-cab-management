@@ -1,5 +1,5 @@
 -- ================================================================
--- Friday Cab Management System: User Admin Approval Workflow
+-- Cab Management System: User Admin Approval Workflow
 -- Apply this migration to PostgreSQL BEFORE deploying code changes.
 -- Existing users are NOT modified; all will default to APPROVED via
 -- the column default. New users will default to PENDING (changed in

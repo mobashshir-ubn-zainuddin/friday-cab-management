@@ -1,5 +1,5 @@
 -- ================================================================
--- Friday Cab Management System: Supabase Auth ID Mapping
+-- Cab Management System: Supabase Auth ID Mapping
 -- This migration adds the supabaseUserId column to the User table
 -- and updates the default approval status to PENDING.
 -- ================================================================

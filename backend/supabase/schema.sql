@@ -1,4 +1,4 @@
--- Supabase PostgreSQL Schema for Friday Cab Management System
+-- Supabase PostgreSQL Schema for Cab Management System
 -- Run this in Supabase SQL Editor
 
 -- Enable UUID extension

@@ -37,7 +37,7 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode; adminOnly?: boolean 
       <div className="min-h-screen flex items-center justify-center bg-slate-950">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-emerald-500 mx-auto mb-4"></div>
-          <p className="text-emerald-500 text-lg">Loading Friday Cab System...</p>
+          <p className="text-emerald-500 text-lg">Loading Cab Management System...</p>
           <p className="text-gray-400 text-sm mt-2">If this takes too long, try refreshing the page</p>
         </div>
       </div>

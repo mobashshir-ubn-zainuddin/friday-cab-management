@@ -54,7 +54,7 @@ const MainLayout = () => {
               <div className="w-8 h-8 bg-emerald-500 rounded-lg flex items-center justify-center">
                 <span className="text-white font-bold text-lg">F</span>
               </div>
-              <span className="text-white font-semibold text-lg">Friday Cab</span>
+              <span className="text-white font-semibold text-lg">Cab Management</span>
             </Link>
           </div>
 
@@ -149,7 +149,7 @@ const MainLayout = () => {
             <div className="w-8 h-8 bg-emerald-500 rounded-lg flex items-center justify-center">
               <span className="text-white font-bold text-lg">F</span>
             </div>
-            <span className="text-white font-semibold">Friday Cab</span>
+            <span className="text-white font-semibold">Cab Management System</span>
           </Link>
           <Button
             variant="ghost"

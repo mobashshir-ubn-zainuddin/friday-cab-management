@@ -132,7 +132,7 @@ const Register = () => {
       if (existing) {
         toast.success('An account with this email already exists. A sign-in link has been sent.');
       } else {
-        toast.success('Registration complete! Check your email for the sign-in link.');
+        toast.success('Registration complete! Check your email for the sign-in link. Check your spam folder also.');
       }
     } catch (error: any) {
       console.error('Register error:', error);
@@ -160,7 +160,7 @@ const Register = () => {
           <div className="inline-flex items-center justify-center w-16 h-16 bg-emerald-500 rounded-2xl mb-4">
             <Car className="w-10 h-10 text-white" />
           </div>
-          <h1 className="text-3xl font-bold text-white tracking-tight">Friday Cab</h1>
+          <h1 className="text-3xl font-bold text-white tracking-tight">Cab Management System</h1>
           <p className="text-slate-400 mt-2">{alreadyExisted && magicLinkSent ? 'Sign in to your account' : 'Create your account'}</p>
         </div>
 
@@ -173,7 +173,7 @@ const Register = () => {
                 </div>
                 <CardTitle className="text-2xl text-white">Verification Pending</CardTitle>
                 <CardDescription className="text-slate-400">
-                  Your registration is pending admin verification. Once your registration is approved, a login link will be sent to your email.
+                  Your registration is pending admin verification. Once your registration is approved, a login link will be sent to your email. You are requested to check your spam too.
                 </CardDescription>
               </CardHeader>
               <CardFooter className="flex flex-col space-y-4 pt-2">
@@ -212,7 +212,7 @@ const Register = () => {
                     <CardDescription className="text-slate-400">
                       Your profile has been saved. A secure sign-in link has been sent to{' '}
                       <span className="font-medium text-slate-200">{sentEmail}</span>.
-                      Click the link to complete your registration and sign in.
+                      Click the link to complete your registration and sign in. Check your spam too.
                     </CardDescription>
                   </>
                 )}

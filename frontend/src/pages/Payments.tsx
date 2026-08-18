@@ -69,7 +69,7 @@ const Payments = () => {
         key: (orderData as any).keyId,
         amount: (orderData as any).amount,
         currency: (orderData as any).currency,
-        name: 'Friday Cab System',
+        name: 'Cab Management System',
         description: `Payment for ${payment.trip?.title}`,
         order_id: (orderData as any).orderId,
         config: {

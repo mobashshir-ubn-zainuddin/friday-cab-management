@@ -45,7 +45,7 @@ const Login = () => {
       if (error) throw error;
 
       setMagicLinkSent(true);
-      toast.success('Check your email for the sign-in link');
+      toast.success('Check your email for the sign-in link. Check your spam too.');
     } catch (error: any) {
       console.error('Magic link error:', error);
       toast.error(error.message || 'Failed to send sign-in link');
@@ -63,7 +63,7 @@ const Login = () => {
           <div className="inline-flex items-center justify-center w-16 h-16 bg-emerald-500 rounded-2xl mb-4">
             <Car className="w-10 h-10 text-white" />
           </div>
-          <h1 className="text-3xl font-bold text-white">Friday Cab</h1>
+          <h1 className="text-3xl font-bold text-white">Cab Management</h1>
           <p className="text-slate-400 mt-2">Log In to your account</p>
         </div>
 
@@ -78,7 +78,7 @@ const Login = () => {
                 <CardDescription className="text-slate-400">
                   A secure sign-in link has been sent to{' '}
                   <span className="font-medium text-slate-200">{sentEmail}</span>.
-                  Click the link to continue.
+                  Click the link to continue. Check your spam folder also.
                 </CardDescription>
               </CardHeader>
               <CardFooter className="flex flex-col space-y-4 pt-2">

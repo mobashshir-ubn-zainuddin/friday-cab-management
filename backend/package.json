@@ -1,7 +1,7 @@
 {
   "name": "friday-cab-backend",
   "version": "1.0.0",
-  "description": "Friday Cab Management System Backend",
+  "description": "Cab Management System Backend",
   "main": "dist/server.js",
   "scripts": {
     "start": "node dist/server.js",

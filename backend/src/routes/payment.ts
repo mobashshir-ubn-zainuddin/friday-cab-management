@@ -23,6 +23,10 @@ const resetPaymentSchema = z.object({
   tripId: z.string().uuid('Invalid trip ID')
 });
 
+const checkPaymentStatusSchema = z.object({
+  tripId: z.string().uuid('Invalid trip ID')
+});
+
 // Get user's payments
 router.get('/my-payments', authenticate, async (req: AuthenticatedRequest, res) => {
   const requestId = (req as any).requestId || 'unknown';
@@ -267,6 +271,54 @@ router.post('/verify', authenticate, validateBody(verifyPaymentSchema), async (r
     res.status(500).json({
       success: false,
       error: 'Failed to verify payment'
+    });
+  }
+});
+
+// Check payment status (for polling)
+router.post('/check-status', authenticate, validateBody(checkPaymentStatusSchema), async (req: AuthenticatedRequest, res) => {
+  try {
+    const { tripId } = req.body;
+    const userId = req.user!.id;
+
+    const payment = await prisma.payment.findFirst({
+      where: {
+        userId,
+        tripId
+      },
+      include: {
+        trip: true
+      }
+    });
+
+    if (!payment) {
+      return res.status(404).json({
+        success: false,
+        error: 'Payment not found'
+      });
+    }
+
+    // If payment is PROCESSING and has a Razorpay order ID, we could optionally
+    // verify with Razorpay API, but for now just return current status
+    // The webhook should have already updated it if payment was successful
+
+    res.json({
+      success: true,
+      data: {
+        id: payment.id,
+        status: payment.status,
+        amount: payment.amount,
+        razorpayOrderId: payment.razorpayOrderId,
+        razorpayPaymentId: payment.razorpayPaymentId,
+        paidAt: payment.paidAt,
+        createdAt: payment.createdAt
+      }
+    });
+  } catch (error) {
+    console.error('Error checking payment status:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to check payment status'
     });
   }
 });

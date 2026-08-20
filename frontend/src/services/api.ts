@@ -254,6 +254,7 @@ export const paymentApi = {
   verify: (data: { razorpayOrderId: string; razorpayPaymentId: string; razorpaySignature: string }) => 
     apiClient.post('/payments/verify', data, { idempotencyKey: generateIdempotencyKey(`verify-payment-${data.razorpayOrderId}`) }),
   reset: (tripId: string) => apiClient.post('/payments/reset', { tripId }, { idempotencyKey: generateIdempotencyKey(`reset-payment-${tripId}`) }),
+  checkStatus: (tripId: string) => apiClient.post('/payments/check-status', { tripId }),
   getAll: (params?: any) => apiClient.get('/payments', { params }),
   exportReport: (params?: any) => apiClient.get('/payments/report/export', { params })
 };

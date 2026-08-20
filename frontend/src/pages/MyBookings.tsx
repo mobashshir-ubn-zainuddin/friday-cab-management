@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { bookingApi, paymentApi } from '@/services/api';
 import type { Booking, BookingStatus } from '@/types';
@@ -27,7 +27,9 @@ import {
   User,
   Phone,
   ArrowRight,
-  Ticket
+  Ticket,
+  RefreshCw,
+  Loader2
 } from 'lucide-react';
 import {
   formatDateIST,
@@ -82,15 +84,16 @@ const MyBookings = () => {
     try {
       // Create order
       const orderData = await paymentApi.createOrder(tripId);
+      const razorpayOrderId = (orderData as any).orderId;
       
       // Initialize Razorpay
       const options = {
         key: (orderData as any).keyId,
         amount: (orderData as any).amount,
         currency: (orderData as any).currency,
-        name: 'Cab Management System',
+        name: 'Friday Cab System',
         description: `Payment for ${tripTitle}`,
-        order_id: (orderData as any).orderId,
+        order_id: razorpayOrderId,
         config: {
           display: {
             blocks: {
@@ -110,6 +113,9 @@ const MyBookings = () => {
           }
         },
         handler: async (response: any) => {
+          // Stop polling when payment handler is called
+          stopPolling();
+          
           try {
             // Verify payment
             await paymentApi.verify({
@@ -140,26 +146,155 @@ const MyBookings = () => {
         },
         modal: {
           ondismiss: async () => {
+            // Stop polling when modal is dismissed
+            stopPolling();
+            
             setProcessingPayment(null);
-            // Reset payment status if user cancelled checkout
+            
+            // Check payment status before deciding to reset
+            // If payment was completed externally, don't reset
             try {
-              await paymentApi.reset(tripId);
-              // Refresh bookings to get updated status
-              fetchBookings();
+              const statusData = await paymentApi.checkStatus(tripId);
+              const currentStatus = (statusData as any).data?.status;
+              
+              if (currentStatus === 'PROCESSING' || currentStatus === 'PENDING') {
+                // Only reset if payment is still pending/processing (not completed)
+                await paymentApi.reset(tripId);
+                // Refresh bookings to get updated status
+                fetchBookings();
+              } else if (currentStatus === 'COMPLETED') {
+                // Payment was completed externally (e.g., via QR scan on phone)
+                // Refresh to show completed status
+                fetchBookings();
+                toast.success('Payment detected and updated!');
+              }
             } catch (error) {
-              console.error('Failed to reset payment:', error);
+              console.error('Failed to check payment status on dismiss:', error);
+              // Fallback: refresh bookings
+              fetchBookings();
             }
           }
         }
       };
+
+      // Start polling for payment status
+      startPolling(tripId, razorpayOrderId);
 
       const razorpay = new (window as any).Razorpay(options);
       razorpay.open();
     } catch (error: any) {
       const message = error.response?.data?.error || 'Failed to initiate payment';
       toast.error(message);
+      stopPolling();
     } finally {
       setProcessingPayment(null);
+    }
+  };
+
+  // Polling mechanism
+  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const pollingPaymentIdRef = useRef<string | null>(null);
+
+  const startPolling = useCallback((tripId: string, razorpayOrderId: string) => {
+    // Clear any existing polling
+    stopPolling();
+    
+    pollingPaymentIdRef.current = tripId;
+    
+    // Poll every 3 seconds for up to 5 minutes (100 attempts)
+    let attempts = 0;
+    const maxAttempts = 100;
+    
+    const poll = async () => {
+      if (attempts >= maxAttempts || pollingPaymentIdRef.current !== tripId) {
+        stopPolling();
+        return;
+      }
+      
+      attempts++;
+      
+      try {
+        const statusData = await paymentApi.checkStatus(tripId);
+        const paymentData = (statusData as any).data;
+        
+        if (paymentData?.status === 'COMPLETED') {
+          // Payment completed! Update UI and stop polling
+          stopPolling();
+          setBookings(prev => prev.map(b => 
+            b.payment?.tripId === tripId 
+              ? { ...b, payment: { ...b.payment!, status: 'COMPLETED' as const, razorpayPaymentId: paymentData.razorpayPaymentId, paidAt: paymentData.paidAt } }
+              : b
+          ));
+          toast.success('Payment successful!');
+          fetchBookings(); // Refresh to get latest data
+          return;
+        } else if (paymentData?.status === 'FAILED') {
+          // Payment failed
+          stopPolling();
+          setBookings(prev => prev.map(b => 
+            b.payment?.tripId === tripId 
+              ? { ...b, payment: { ...b.payment!, status: 'FAILED' as const } }
+              : b
+          ));
+          toast.error('Payment failed. Please try again.');
+          fetchBookings();
+          return;
+        }
+        // If still PROCESSING or PENDING, continue polling
+      } catch (error) {
+        console.error('Polling error:', error);
+        // Continue polling on error
+      }
+    };
+    
+    // Initial poll after 2 seconds
+    setTimeout(poll, 2000);
+    
+    // Then poll every 3 seconds
+    pollingIntervalRef.current = setInterval(poll, 3000);
+  }, []);
+
+  const stopPolling = useCallback(() => {
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current);
+      pollingIntervalRef.current = null;
+    }
+    pollingPaymentIdRef.current = null;
+  }, []);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => stopPolling();
+  }, [stopPolling]);
+
+  const handleCheckStatus = async (payment: any, tripId: string) => {
+    try {
+      const statusData = await paymentApi.checkStatus(tripId);
+      const paymentData = (statusData as any).data;
+      
+      if (paymentData?.status === 'COMPLETED') {
+        setBookings(prev => prev.map(b => 
+          b.payment?.id === payment.id 
+            ? { ...b, payment: { ...b.payment!, status: 'COMPLETED' as const, razorpayPaymentId: paymentData.razorpayPaymentId, paidAt: paymentData.paidAt } }
+            : b
+        ));
+        toast.success('Payment detected and updated!');
+        fetchBookings();
+      } else if (paymentData?.status === 'FAILED') {
+        setBookings(prev => prev.map(b => 
+          b.payment?.id === payment.id 
+            ? { ...b, payment: { ...b.payment!, status: 'FAILED' as const } }
+            : b
+        ));
+        toast.error('Payment failed. Please try again.');
+        fetchBookings();
+      } else {
+        toast.info(`Payment status: ${paymentData?.status || 'Unknown'}`);
+        fetchBookings();
+      }
+    } catch (error) {
+      console.error('Failed to check payment status:', error);
+      toast.error('Failed to check payment status');
     }
   };
 
@@ -507,14 +642,27 @@ const MyBookings = () => {
                 </div>
                 <div className="flex items-center gap-3">
                   {booking.payment.status === 'PENDING' || booking.payment.status === 'PROCESSING' ? (
-                    <Button
-                      onClick={() => handlePayNow(booking.payment, booking.trip.title, booking.tripId)}
-                      disabled={processingPayment === booking.payment.id}
-                      className="bg-emerald-500 hover:bg-emerald-600"
-                    >
-                      {processingPayment === booking.payment.id ? 'Processing...' : 'Pay Now'}
-                      {!processingPayment && <ArrowRight className="w-4 h-4 ml-2" />}
-                    </Button>
+                    <>
+                      <Button
+                        onClick={() => handlePayNow(booking.payment, booking.trip.title, booking.tripId)}
+                        disabled={processingPayment === booking.payment.id}
+                        className="bg-emerald-500 hover:bg-emerald-600"
+                      >
+                        {processingPayment === booking.payment.id ? 'Processing...' : 'Pay Now'}
+                        {!processingPayment && <ArrowRight className="w-4 h-4 ml-2" />}
+                      </Button>
+                      {booking.payment.razorpayOrderId && (
+                        <Button
+                          onClick={() => handleCheckStatus(booking.payment, booking.tripId)}
+                          disabled={processingPayment === booking.payment.id}
+                          variant="outline"
+                          className="border-blue-500/30 text-blue-400 hover:bg-blue-500/10"
+                        >
+                          <RefreshCw className="w-4 h-4 mr-2" />
+                          Check Status
+                        </Button>
+                      )}
+                    </>
                   ) : booking.payment.status === 'COMPLETED' ? (
                     <Badge variant="outline" className="bg-emerald-500/10 text-emerald-400 border-emerald-500/30">
                       <CheckCircle className="w-4 h-4 mr-1" />

@@ -16,6 +16,7 @@ The application is designed with a strong focus on:
 - Secure payment processing
 - Reliable email notifications
 - Role-based access control
+- Pending payment prevent booking 
 
 ---
 

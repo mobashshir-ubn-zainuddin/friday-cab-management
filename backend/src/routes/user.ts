@@ -75,7 +75,7 @@ router.get('/dashboard', authenticate, async (req: AuthenticatedRequest, res) =>
       prisma.payment.count({
         where: {
           userId,
-          status: 'PENDING'
+          status: { in: ['PENDING', 'PROCESSING', 'FAILED'] }
         }
       }),
 
@@ -235,29 +235,29 @@ router.get('/', authenticate, authorizeAdmin, async (req: AuthenticatedRequest, 
     const [users, total] = await Promise.all([
       prisma.user.findMany({
         where,
-        select: {
-          id: true,
-          email: true,
-          name: true,
-          phone: true,
-          rollNumber: true,
-          department: true,
-          isAdmin: true,
-          isBlocked: true,
-          approvalStatus: true,
-          approvalReviewedAt: true,
-          approvalReviewedBy: true,
-          rejectionReason: true,
-          createdAt: true,
-          _count: {
-            select: {
-              bookings: true,
-              payments: {
-                where: { status: 'PENDING' }
+select: {
+            id: true,
+            email: true,
+            name: true,
+            phone: true,
+            rollNumber: true,
+            department: true,
+            isAdmin: true,
+            isBlocked: true,
+            approvalStatus: true,
+            approvalReviewedAt: true,
+            approvalReviewedBy: true,
+            rejectionReason: true,
+            createdAt: true,
+            _count: {
+              select: {
+                bookings: true,
+                payments: {
+                  where: { status: { in: ['PENDING', 'PROCESSING', 'FAILED'] } }
+                }
               }
             }
-          }
-        },
+          },
         orderBy: [
           { approvalStatus: 'asc' },
           { createdAt: 'desc' }

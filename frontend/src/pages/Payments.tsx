@@ -173,7 +173,8 @@ const Payments = () => {
     return formatDateIST(dateString) || 'N/A';
   };
 
-  const pendingPayments = payments.filter(p => p.status === 'PENDING' || p.status === 'PROCESSING');
+  // Include PENDING (not paid), PROCESSING (checkout started but not completed), FAILED (payment attempt failed)
+  const pendingPayments = payments.filter(p => p.status === 'PENDING' || p.status === 'PROCESSING' || p.status === 'FAILED');
   const completedPayments = payments.filter(p => p.status === 'COMPLETED');
   const totalPending = pendingPayments.reduce((sum, p) => sum + p.amount, 0);
   const totalPaid = completedPayments.reduce((sum, p) => sum + p.amount, 0);

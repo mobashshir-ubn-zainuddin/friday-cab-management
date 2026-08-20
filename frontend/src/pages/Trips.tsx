@@ -289,6 +289,17 @@ const Trips = () => {
           
           {bookingTrip && (
             <div className="py-4">
+              {hasPendingPayments && (
+                <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3 mb-4 flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+                  <div className="text-sm">
+                    <p className="text-red-400 font-medium">Payment Required</p>
+                    <p className="text-red-300/80 mt-1">
+                      You have pending payments from previous trips. Please complete them before booking another trip.
+                    </p>
+                  </div>
+                </div>
+              )}
               <h4 className="font-medium text-white">{bookingTrip.title}</h4>
               <p className="text-slate-400 text-sm mt-1">
                 {formatDate(bookingTrip.date)} at {formatTime(bookingTrip.departureTime)}
@@ -312,10 +323,10 @@ const Trips = () => {
             </Button>
             <Button
               onClick={handleBookTrip}
-              disabled={bookingLoading}
-              className="bg-emerald-500 hover:bg-emerald-600"
+              disabled={bookingLoading || hasPendingPayments}
+              className="bg-emerald-500 hover:bg-emerald-600 disabled:bg-slate-700 disabled:text-slate-500"
             >
-              {bookingLoading ? 'Booking...' : 'Confirm Booking'}
+              {bookingLoading ? 'Booking...' : hasPendingPayments ? 'Clear Pending Payment First' : 'Confirm Booking'}
             </Button>
           </DialogFooter>
         </DialogContent>

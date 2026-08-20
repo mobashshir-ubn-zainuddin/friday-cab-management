@@ -180,7 +180,7 @@ router.get('/:id', authenticate, async (req: AuthenticatedRequest, res) => {
 });
 
 // Create booking
-router.post('/', authenticate, checkBlockedStatus, checkPendingPayments, validateBody(createBookingSchema), async (req: AuthenticatedRequest, res) => {
+router.post('/', authenticate, checkBlockedStatus, validateBody(createBookingSchema), async (req: AuthenticatedRequest, res) => {
   try {
     const { tripId } = req.body;
     const userId = req.user!.id;
@@ -245,48 +245,110 @@ router.post('/', authenticate, checkBlockedStatus, checkPendingPayments, validat
       });
     }
 
-    // Create or reactivate booking
-    let booking;
-    if (existingBooking) {
-      booking = await prisma.booking.update({
-        where: { id: existingBooking.id },
-        data: {
-          status: 'CONFIRMED',
-          cancelledAt: null
-        },
-        include: {
-          trip: true
-        }
-      });
-    } else {
-      booking = await prisma.booking.create({
-        data: {
+    // Use a transaction to atomically check pending payments AND create booking
+    // This prevents race conditions where a user could bypass the pending payment check
+    const result = await prisma.$transaction(async (tx) => {
+      // Re-check pending payments inside transaction (atomic with booking creation)
+      const pendingPayments = await tx.payment.count({
+        where: {
           userId,
-          tripId,
-          status: 'CONFIRMED'
-        },
-        include: {
-          trip: true
+          status: { in: ['PENDING', 'PROCESSING', 'FAILED'] }
         }
       });
-    }
 
-    // Update trip booking count
-    await prisma.trip.update({
-      where: { id: tripId },
-      data: {
-        currentBookings: {
-          increment: 1
-        }
+      if (pendingPayments > 0) {
+        // Throw an error that will be caught and returned as 409
+        throw new Error('PENDING_PAYMENT');
       }
+
+      // Re-check trip booking count inside transaction (atomic)
+      const currentTrip = await tx.trip.findUnique({
+        where: { id: tripId },
+        select: { currentBookings: true, maxBookings: true }
+      });
+
+      if (!currentTrip || currentTrip.currentBookings >= currentTrip.maxBookings) {
+        throw new Error('MAX_BOOKINGS_REACHED');
+      }
+
+      // Check if already booked (inside transaction for consistency)
+      const existing = await tx.booking.findUnique({
+        where: {
+          userId_tripId: {
+            userId,
+            tripId
+          }
+        }
+      });
+
+      if (existing && existing.status !== 'CANCELLED') {
+        throw new Error('ALREADY_BOOKED');
+      }
+
+      // Create or reactivate booking
+      let booking;
+      if (existing) {
+        booking = await tx.booking.update({
+          where: { id: existing.id },
+          data: {
+            status: 'CONFIRMED',
+            cancelledAt: null
+          },
+          include: {
+            trip: true
+          }
+        });
+      } else {
+        booking = await tx.booking.create({
+          data: {
+            userId,
+            tripId,
+            status: 'CONFIRMED'
+          },
+          include: {
+            trip: true
+          }
+        });
+      }
+
+      // Update trip booking count
+      await tx.trip.update({
+        where: { id: tripId },
+        data: {
+          currentBookings: {
+            increment: 1
+          }
+        }
+      });
+
+      return booking;
     });
 
     res.status(201).json({
       success: true,
-      data: booking,
+      data: result,
       message: 'Booking created successfully'
     });
-  } catch (error) {
+  } catch (error: any) {
+    if (error.message === 'PENDING_PAYMENT') {
+      return res.status(409).json({
+        success: false,
+        error: 'You have a pending payment from a previous trip. Please complete it before booking another trip.',
+        code: 'PENDING_PAYMENT'
+      });
+    }
+    if (error.message === 'MAX_BOOKINGS_REACHED') {
+      return res.status(400).json({
+        success: false,
+        error: 'Maximum bookings reached for this trip'
+      });
+    }
+    if (error.message === 'ALREADY_BOOKED') {
+      return res.status(409).json({
+        success: false,
+        error: 'You have already booked this trip'
+      });
+    }
     console.error('Error creating booking:', error);
     res.status(500).json({
       success: false,

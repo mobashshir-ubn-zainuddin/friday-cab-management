@@ -171,18 +171,19 @@ export const checkPendingPayments = async (
       return;
     }
 
+    // Check for payments that are still unpaid (PENDING = not paid yet, PROCESSING = checkout started but not completed, FAILED = payment attempt failed)
     const pendingPayments = await prisma.payment.count({
       where: {
         userId: req.user.id,
-        status: { in: ['PENDING', 'FAILED'] }
+        status: { in: ['PENDING', 'PROCESSING', 'FAILED'] }
       }
     });
 
     if (pendingPayments > 0) {
-      res.status(403).json({
+      res.status(409).json({
         success: false,
-        error: 'You have pending payments. Please clear them before proceeding.',
-        code: 'PENDING_PAYMENTS'
+        error: 'You have a pending payment from a previous trip. Please complete it before booking another trip.',
+        code: 'PENDING_PAYMENT'
       });
       return;
     }

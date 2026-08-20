@@ -217,10 +217,11 @@ router.post('/sync-user', verifySupabaseUser, async (req: AuthenticatedRequest, 
     }
 
     // Check pending payments (lightweight count query)
+    // Include PENDING (not paid), PROCESSING (checkout started but not completed), FAILED (payment attempt failed)
     const pendingPayments = await prisma.payment.count({
       where: {
         userId: dbUser.id,
-        status: { in: ['PENDING', 'FAILED'] }
+        status: { in: ['PENDING', 'PROCESSING', 'FAILED'] }
       }
     });
 
@@ -278,10 +279,11 @@ router.get('/me', verifySupabaseUser, async (req: AuthenticatedRequest, res) => 
     }
 
     // Check pending payments (lightweight count query)
+    // Include PENDING (not paid), PROCESSING (checkout started but not completed), FAILED (payment attempt failed)
     const pendingPayments = await prisma.payment.count({
       where: {
         userId: dbUser.id,
-        status: { in: ['PENDING', 'FAILED'] }
+        status: { in: ['PENDING', 'PROCESSING', 'FAILED'] }
       }
     });
 

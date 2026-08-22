@@ -5,7 +5,6 @@ import { authenticate, authorizeAdmin } from '../middleware/auth';
 import { validateBody } from '../middleware/validation';
 import { AuthenticatedRequest, TripStatus } from '../types';
 import {
-  sendTripNotification,
   formatEmailDate,
   formatEmailTime,
   formatEmailDateTime
@@ -429,30 +428,6 @@ router.post('/', authenticate, authorizeAdmin, validateBody(createTripSchema), a
         status: 'UPCOMING',
         createdBy: req.user!.id
       }
-    });
-
-    // Send email notification to all users
-    const users = await prisma.user.findMany({
-      where: { isBlocked: false },
-      select: { email: true }
-    });
-
-    const emailPromises = users.map(user =>
-      sendTripNotification(user.email, {
-        title: trip.title,
-        date: formatEmailDate(trip.date),
-        departureTime: formatEmailTime(trip.departureTime),
-        bookingStartTime: formatEmailDateTime(trip.bookingStartTime),
-        bookingEndTime: formatEmailDateTime(trip.bookingEndTime)
-      })
-    );
-
-    // Don't wait for emails to send
-    Promise.allSettled(emailPromises).then(results => {
-      const sent = results.filter(r => r.status === 'fulfilled' && r.value.success).length;
-      const failed = results.filter(r => r.status === 'fulfilled' && !r.value.success).length;
-      const errors = results.filter(r => r.status === 'rejected').length;
-      console.log(`Trip notification emails: ${sent} sent, ${failed} failed, ${errors} errors`);
     });
 
     res.status(201).json({

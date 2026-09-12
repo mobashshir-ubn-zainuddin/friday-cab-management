@@ -115,6 +115,7 @@ const MyBookings = () => {
         handler: async (response: any) => {
           // Stop polling when payment handler is called
           stopPolling();
+          setProcessingPayment(null);
           
           try {
             // Verify payment
@@ -134,6 +135,8 @@ const MyBookings = () => {
           } catch (error) {
             console.error('Payment verification failed:', error);
             toast.error('Payment verification failed. Please contact support.');
+            // Refresh to get actual status from server
+            fetchBookings();
           }
         },
         prefill: {
@@ -152,21 +155,23 @@ const MyBookings = () => {
             setProcessingPayment(null);
             
             // Check payment status before deciding to reset
-            // If payment was completed externally, don't reset
+            // The server-side check-status now actively verifies with Razorpay API,
+            // so it will detect externally completed payments (QR, UPI on another device)
             try {
               const statusData = await paymentApi.checkStatus(tripId);
-              const currentStatus = (statusData as any).data?.status;
+              const currentStatus = (statusData as any).status || (statusData as any).data?.status;
               
-              if (currentStatus === 'PROCESSING' || currentStatus === 'PENDING') {
+              if (currentStatus === 'COMPLETED') {
+                // Payment was completed (detected by server-side Razorpay verification)
+                fetchBookings();
+                toast.success('Payment completed successfully!');
+              } else if (currentStatus === 'PROCESSING' || currentStatus === 'PENDING') {
                 // Only reset if payment is still pending/processing (not completed)
+                // Server-side reset also checks with Razorpay before resetting
                 await paymentApi.reset(tripId);
-                // Refresh bookings to get updated status
                 fetchBookings();
-              } else if (currentStatus === 'COMPLETED') {
-                // Payment was completed externally (e.g., via QR scan on phone)
-                // Refresh to show completed status
+              } else {
                 fetchBookings();
-                toast.success('Payment detected and updated!');
               }
             } catch (error) {
               console.error('Failed to check payment status on dismiss:', error);
@@ -182,17 +187,20 @@ const MyBookings = () => {
 
       const razorpay = new (window as any).Razorpay(options);
       razorpay.open();
+      // NOTE: razorpay.open() is non-blocking. The modal is now open.
+      // DO NOT call setProcessingPayment(null) here — the handler or ondismiss
+      // callbacks will handle cleanup when the modal closes.
     } catch (error: any) {
+      // Only reset processing state on error (modal never opened)
       const message = error.response?.data?.error || 'Failed to initiate payment';
       toast.error(message);
       stopPolling();
-    } finally {
       setProcessingPayment(null);
     }
   };
 
   // Polling mechanism
-  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const pollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollingPaymentIdRef = useRef<string | null>(null);
 
   const startPolling = useCallback((tripId: string, razorpayOrderId: string) => {

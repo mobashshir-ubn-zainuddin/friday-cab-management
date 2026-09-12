@@ -29,16 +29,49 @@ import { requestTimingMiddleware } from './middleware/requestTiming';
 
 const app = express();
 
-// Background job: Sync trip statuses every minute
-const TRIP_STATUS_SYNC_INTERVAL = 60 * 1000; // 1 minute
-setInterval(async () => {
-  try {
-    await syncTripStatuses(prisma);
-  } catch (error) {
-    console.error('[Background Job] Error syncing trip statuses:', error);
+// Background job: Sync trip statuses with dynamic interval
+// - 1 minute when trips have upcoming status changes
+// - 5 minutes when no trips need syncing (idle)
+const MIN_SYNC_INTERVAL = 60 * 1000;      // 1 minute
+const MAX_SYNC_INTERVAL = 5 * 60 * 1000;  // 5 minutes
+
+declare global {
+  var __tripStatusSyncInterval: NodeJS.Timeout | undefined;
+  var __tripStatusSyncIntervalMs: number;
+}
+
+function scheduleNextSync(intervalMs: number) {
+  if (global.__tripStatusSyncInterval) {
+    clearInterval(global.__tripStatusSyncInterval);
   }
-}, TRIP_STATUS_SYNC_INTERVAL);
-console.log(`[Background Job] Trip status sync scheduled every ${TRIP_STATUS_SYNC_INTERVAL / 1000} seconds`);
+  global.__tripStatusSyncIntervalMs = intervalMs;
+  global.__tripStatusSyncInterval = setInterval(async () => {
+    const jobStart = Date.now();
+    console.log(`[Background Job] Trip status sync started at ${new Date().toISOString()} (interval: ${intervalMs/1000}s)`);
+    try {
+      const result = await syncTripStatuses(prisma);
+      const duration = Date.now() - jobStart;
+      console.log(`[Background Job] Trip status sync completed in ${duration}ms, updated: ${result.updated}, candidates: ${result.candidates}`);
+      
+      // Dynamic interval: if no candidates, slow down; if candidates, speed up
+      const nextInterval = result.candidates > 0 ? MIN_SYNC_INTERVAL : MAX_SYNC_INTERVAL;
+      if (nextInterval !== intervalMs) {
+        console.log(`[Background Job] Adjusting interval from ${intervalMs/1000}s to ${nextInterval/1000}s`);
+        scheduleNextSync(nextInterval);
+      }
+    } catch (error) {
+      console.error('[Background Job] Error syncing trip statuses:', error);
+      // On error, keep current interval
+    }
+  }, intervalMs);
+  console.log(`[Background Job] Trip status sync scheduled every ${intervalMs / 1000} seconds`);
+}
+
+if (!global.__tripStatusSyncInterval) {
+  scheduleNextSync(MIN_SYNC_INTERVAL);
+} else {
+  console.log('[Background Job] Trip status sync already running (skipping duplicate)');
+}
 app.set('trust proxy', 1);
 
 const PORT = process.env.PORT || 5000;

@@ -1,10 +1,8 @@
 import { useEffect, useState } from 'react';
-import { paymentApi, adminApi, tripApi } from '@/services/api';
+import { adminApi, tripApi, paymentApi } from '@/services/api';
 import type { Trip, Payment, User } from '@/types';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
@@ -53,8 +51,29 @@ interface Attendee {
   } | null;
 }
 
+interface TripForPaymentControl {
+  id: string;
+  title: string;
+  date: string;
+  departureTime: string;
+  status: string;
+  totalCost: number | null;
+  costPerPerson: number | null;
+  paymentWindowOpen: boolean;
+  paymentAssigned: boolean;
+  paymentStatus: 'NOT_ASSIGNED' | 'PAYMENT_PENDING' | 'PAYMENT_COMPLETED';
+  currentBookings: number;
+  summary: {
+    totalAttendees: number;
+    paidCount: number;
+    pendingCount: number;
+    failedCount: number;
+    noPaymentCount: number;
+  };
+}
+
 interface TripBookingsData {
-  trip: Trip;
+  trip: TripForPaymentControl;
   attendees: Attendee[];
   summary: {
     totalAttendees: number;
@@ -66,10 +85,9 @@ interface TripBookingsData {
 }
 
 const PaymentControl = () => {
-  const [trips, setTrips] = useState<Trip[]>([]);
-  const [pendingPayments, setPendingPayments] = useState<Payment[]>([]);
+  const [trips, setTrips] = useState<TripForPaymentControl[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedTrip, setSelectedTrip] = useState<Trip | null>(null);
+  const [selectedTrip, setSelectedTrip] = useState<TripForPaymentControl | null>(null);
   const [totalCost, setTotalCost] = useState('');
   const [openingPayment, setOpeningPayment] = useState(false);
   const [tripAttendees, setTripAttendees] = useState<Attendee[]>([]);
@@ -81,22 +99,8 @@ const PaymentControl = () => {
 
   const fetchData = async () => {
     try {
-      // Parallelize independent API calls
-      const [tripsData, pendingData] = await Promise.all([
-        tripApi.getAll(),
-        adminApi.getPendingPayments()
-      ]);
-      
-      // Show trips that are COMPLETED or IN_PROGRESS or have bookings
-      // Use effectiveStatus as fallback since it's computed from time-based logic
-      setTrips((tripsData as any).trips.filter((t: any) => {
-        const status = t.effectiveStatus || t.status;
-        return status === 'COMPLETED' || 
-               status === 'IN_PROGRESS' || 
-               status === 'CAB_ASSIGNED' ||
-               t.paymentWindowOpen;
-      }));
-      setPendingPayments((pendingData as any).pendingPayments || []);
+      const data = await adminApi.getTripsForPaymentControl();
+      setTrips((data as any).trips || []);
     } catch (error) {
       console.error('Error fetching data:', error);
       toast.error('Failed to load payment data');
@@ -105,7 +109,7 @@ const PaymentControl = () => {
     }
   };
 
-  const handleViewAttendees = async (trip: Trip) => {
+  const handleViewAttendees = async (trip: TripForPaymentControl) => {
     setSelectedTrip(trip);
     setLoadingAttendees(true);
     try {
@@ -119,19 +123,15 @@ const PaymentControl = () => {
     }
   };
 
-  const handleOpenPaymentWindow = async () => {
+  const handleOpenPayment = async () => {
     if (!selectedTrip || !totalCost) return;
 
     setOpeningPayment(true);
     const tripId = selectedTrip.id;
-    
+
     try {
       await tripApi.togglePaymentWindow(tripId, 'open', parseFloat(totalCost));
       toast.success('Payment window opened successfully');
-      // Refresh attendees to show new payment records
-      const data = await adminApi.getTripBookingsForPayment(tripId);
-      setTripAttendees((data as any).attendees || []);
-      // Also refresh trips list
       fetchData();
       setSelectedTrip(null);
       setTotalCost('');
@@ -140,19 +140,6 @@ const PaymentControl = () => {
       toast.error(message);
     } finally {
       setOpeningPayment(false);
-    }
-  };
-
-  const handleClosePaymentWindow = async (trip: Trip) => {
-    const tripId = trip.id;
-    
-    try {
-      await tripApi.togglePaymentWindow(tripId, 'close');
-      toast.success('Payment window closed successfully');
-      fetchData();
-    } catch (error: any) {
-      const message = error.response?.data?.error || 'Failed to close payment window';
-      toast.error(message);
     }
   };
 
@@ -200,12 +187,25 @@ const PaymentControl = () => {
 
   const formatDate = (dateString: string) => formatDateIST(dateString) || '';
 
-  const pendingAndProcessingPayments = pendingPayments.filter(p => p.status === 'PENDING' || p.status === 'PROCESSING');
-  const completedPayments = pendingPayments.filter(p => p.status === 'COMPLETED');
-  const totalPending = pendingAndProcessingPayments
-    .reduce((sum, p) => sum + p.amount, 0);
+  const getPaymentStatusBadge = (status: 'NOT_ASSIGNED' | 'PAYMENT_PENDING' | 'PAYMENT_COMPLETED') => {
+    const styles: Record<string, string> = {
+      NOT_ASSIGNED: 'bg-slate-500/10 text-slate-400 border-slate-500/30',
+      PAYMENT_PENDING: 'bg-amber-500/10 text-amber-400 border-amber-500/30',
+      PAYMENT_COMPLETED: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30',
+    };
+    const labels: Record<string, string> = {
+      NOT_ASSIGNED: 'Not Assigned',
+      PAYMENT_PENDING: 'Payment Pending',
+      PAYMENT_COMPLETED: 'Payment Completed',
+    };
+    return (
+      <Badge variant="outline" className={styles[status] || styles.NOT_ASSIGNED}>
+        {labels[status] || status}
+      </Badge>
+    );
+  };
 
-  const getPaymentStatusBadge = (status: string | undefined) => {
+  const getAttendeePaymentStatusBadge = (status: string | undefined) => {
     if (!status) return (
       <Badge variant="outline" className="bg-slate-500/10 text-slate-400 border-slate-500/30">
         No Payment
@@ -273,7 +273,9 @@ const PaymentControl = () => {
               </div>
               <div>
                 <p className="text-slate-400 text-sm">Pending Payments</p>
-                <p className="text-2xl font-bold text-white">{pendingAndProcessingPayments.length}</p>
+                <p className="text-2xl font-bold text-white">
+                  {trips.filter(t => t.paymentStatus === 'PAYMENT_PENDING').length}
+                </p>
               </div>
             </div>
           </CardContent>
@@ -282,12 +284,14 @@ const PaymentControl = () => {
         <Card className="bg-slate-900 border-slate-800">
           <CardContent className="p-6">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-red-500/10 rounded-lg flex items-center justify-center">
-                <IndianRupee className="w-5 h-5 text-red-400" />
+              <div className="w-10 h-10 bg-slate-500/10 rounded-lg flex items-center justify-center">
+                <IndianRupee className="w-5 h-5 text-slate-400" />
               </div>
               <div>
-                <p className="text-slate-400 text-sm">Total Pending</p>
-                <p className="text-2xl font-bold text-white">₹{totalPending.toLocaleString()}</p>
+                <p className="text-slate-400 text-sm">Not Assigned</p>
+                <p className="text-2xl font-bold text-white">
+                  {trips.filter(t => t.paymentStatus === 'NOT_ASSIGNED').length}
+                </p>
               </div>
             </div>
           </CardContent>
@@ -300,8 +304,10 @@ const PaymentControl = () => {
                 <CheckCircle className="w-5 h-5 text-emerald-400" />
               </div>
               <div>
-                <p className="text-slate-400 text-sm">Completed</p>
-                <p className="text-2xl font-bold text-white">{completedPayments.length}</p>
+                <p className="text-slate-400 text-sm">Completed (Hidden)</p>
+                <p className="text-2xl font-bold text-white">
+                  {trips.filter(t => t.paymentStatus === 'PAYMENT_COMPLETED').length}
+                </p>
               </div>
             </div>
           </CardContent>
@@ -314,7 +320,7 @@ const PaymentControl = () => {
                 <Users className="w-5 h-5 text-blue-400" />
               </div>
               <div>
-                <p className="text-slate-400 text-sm">Trips to Manage</p>
+                <p className="text-slate-400 text-sm">Total Trips to Manage</p>
                 <p className="text-2xl font-bold text-white">{trips.length}</p>
               </div>
             </div>
@@ -326,91 +332,101 @@ const PaymentControl = () => {
       <div className="space-y-4">
         <h2 className="text-lg font-semibold text-white">Trip Payments</h2>
         <div className="grid gap-4">
-          {trips.map((trip) => (
-            <Card key={trip.id} className="bg-slate-900 border-slate-800">
-              <CardContent className="p-6">
-                <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-3">
-                      <h3 className="text-lg font-semibold text-white">{trip.title}</h3>
-                      {trip.paymentWindowOpen ? (
-                        <Badge variant="outline" className="bg-emerald-500/10 text-emerald-400 border-emerald-500/30">
-                          <LockOpen className="w-3 h-3 mr-1" />
-                          Open
-                        </Badge>
-                      ) : (
-                        <Badge variant="outline" className="bg-slate-500/10 text-slate-400 border-slate-500/30">
-                          <Lock className="w-3 h-3 mr-1" />
-                          Closed
-                        </Badge>
-                      )}
-                    </div>
-                    
-                    <div className="flex items-center gap-4 mt-2 text-sm text-slate-400">
-                      <span className="flex items-center gap-1">
-                        <Calendar className="w-4 h-4" />
-                        {formatDate(trip.date)}
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <Users className="w-4 h-4" />
-                        {trip.currentBookings} bookings
-                      </span>
-                      {trip.costPerPerson && (
-                        <span className="flex items-center gap-1">
-                          <IndianRupee className="w-4 h-4" />
-                          ₹{trip.costPerPerson}/person
-                        </span>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    {!trip.paymentWindowOpen ? (
-                      <Button
-                        onClick={() => handleViewAttendees(trip)}
-                        className="bg-emerald-500 hover:bg-emerald-600"
-                      >
-                        <LockOpen className="w-4 h-4 mr-2" />
-                        Open Payment
-                      </Button>
-                    ) : (
-                      <>
-                        <Button
-                          variant="outline"
-                          onClick={() => handleViewAttendees(trip)}
-                          className="border-blue-500/30 text-blue-400 hover:bg-blue-500/10"
-                        >
-                          <Eye className="w-4 h-4 mr-2" />
-                          View Attendees
-                        </Button>
-                        <Button
-                          variant="outline"
-                          onClick={() => handleClosePaymentWindow(trip)}
-                          className="border-amber-500/30 text-amber-400 hover:bg-amber-500/10"
-                        >
-                          <Lock className="w-4 h-4 mr-2" />
-                          Close Payment
-                        </Button>
-                      </>
-                    )}
-                  </div>
+          {trips.length === 0 ? (
+            <Card className="bg-slate-900 border-slate-800">
+              <CardContent className="p-12 text-center">
+                <div className="w-16 h-16 bg-slate-800 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <CreditCard className="w-8 h-8 text-slate-500" />
                 </div>
+                <h3 className="text-white font-medium text-lg">No trips need payment management</h3>
+                <p className="text-slate-400 mt-2">
+                  All trips either have payments assigned and completed, or have no bookings.
+                </p>
               </CardContent>
             </Card>
-          ))}
+          ) : (
+            trips.map((trip) => (
+              <Card key={trip.id} className="bg-slate-900 border-slate-800">
+                <CardContent className="p-6">
+                  <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-3 flex-wrap">
+                        <h3 className="text-lg font-semibold text-white">{trip.title}</h3>
+                        {getPaymentStatusBadge(trip.paymentStatus)}
+                      </div>
+
+                      <div className="flex items-center gap-4 mt-2 text-sm text-slate-400 flex-wrap">
+                        <span className="flex items-center gap-1">
+                          <Calendar className="w-4 h-4" />
+                          {formatDate(trip.date)}
+                        </span>
+                        <span className="flex items-center gap-1">
+                          <Users className="w-4 h-4" />
+                          {trip.currentBookings} bookings
+                        </span>
+                        {trip.costPerPerson && (
+                          <span className="flex items-center gap-1">
+                            <IndianRupee className="w-4 h-4" />
+                            ₹{trip.costPerPerson}/person
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {/* View Attendees button - always available */}
+                      <Button
+                        variant="outline"
+                        onClick={() => handleViewAttendees(trip)}
+                        className="border-blue-500/30 text-blue-400 hover:bg-blue-500/10"
+                      >
+                        <Eye className="w-4 h-4 mr-2" />
+                        View Attendees
+                      </Button>
+
+                      {/* Open Payment button - ONLY for NOT_ASSIGNED trips */}
+                      {trip.paymentStatus === 'NOT_ASSIGNED' && (
+                        <Button
+                          onClick={() => { setSelectedTrip(trip); setTotalCost(''); }}
+                          className="bg-emerald-500 hover:bg-emerald-600"
+                        >
+                          <LockOpen className="w-4 h-4 mr-2" />
+                          Assign Payment
+                        </Button>
+                      )}
+
+                      {/* For PAYMENT_PENDING trips, show status only - no close/reopen */}
+                      {trip.paymentStatus === 'PAYMENT_PENDING' && (
+                        <Badge variant="outline" className="bg-amber-500/10 text-amber-400 border-amber-500/30">
+                          <Clock className="w-3 h-3 mr-1" />
+                          Awaiting Payments
+                        </Badge>
+                      )}
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            ))
+          )}
         </div>
       </div>
 
-      {/* Attendees Dialog */}
-      <Dialog open={!!selectedTrip} onOpenChange={() => { setSelectedTrip(null); setTripAttendees([]); }}>
+      {/* Attendees Dialog - READ ONLY */}
+      <Dialog open={!!selectedTrip} onOpenChange={() => { setSelectedTrip(null); setTripAttendees([]); setTotalCost(''); }}>
         <DialogContent className="bg-slate-900 border-slate-800 text-white max-w-4xl max-h-[85vh] flex flex-col p-0">
           <DialogHeader className="p-6 pb-2">
             <DialogTitle className="text-xl flex items-center gap-2">
               <Users className="w-5 h-5 text-emerald-500" />
-              {selectedTrip?.title} - Attendees & Payments
+              {selectedTrip?.title} - Attendees & Payment Status
             </DialogTitle>
             <DialogDescription className="text-slate-400">
               {selectedTrip && formatDate(selectedTrip.date)} • {tripAttendees.length} attendee(s)
+              {selectedTrip?.paymentStatus && (
+                <span className="ml-4">
+                  {' | '}
+                  {getPaymentStatusBadge(selectedTrip.paymentStatus)}
+                </span>
+              )}
             </DialogDescription>
           </DialogHeader>
 
@@ -460,7 +476,7 @@ const PaymentControl = () => {
                             {attendee.payment ? (
                               <>
                                 <p className="text-xl font-bold text-white">₹{attendee.payment.amount}</p>
-                                {getPaymentStatusBadge(attendee.payment.status)}
+                                {getAttendeePaymentStatusBadge(attendee.payment.status)}
                               </>
                             ) : (
                               <span className="text-slate-500 text-sm">No payment record</span>
@@ -475,49 +491,94 @@ const PaymentControl = () => {
             )}
           </div>
 
+          {/* Dialog Footer - Only show payment assignment for NOT_ASSIGNED trips */}
           <DialogFooter className="p-4 border-t border-slate-800 bg-slate-900/50">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 w-full">
-              <div className="space-y-2 sm:space-y-0 sm:space-x-4 w-full sm:w-auto">
-                <Label className="text-sm">Total Trip Cost (₹)</Label>
-                <Input
-                  type="number"
-                  value={totalCost}
-                  onChange={(e) => setTotalCost(e.target.value)}
-                  className="bg-slate-800 border-slate-700 text-white w-full sm:w-48"
-                  placeholder="Enter total cost"
-                />
-              </div>
-
-              {totalCost && selectedTrip && (
-                <div className="p-3 bg-emerald-500/10 rounded-lg border border-emerald-500/20 flex items-center gap-4 text-sm">
-                  <p className="text-emerald-400">Cost per person</p>
-                  <p className="text-2xl font-bold text-emerald-400">
-                    ₹{(parseFloat(totalCost) / tripAttendees.length).toFixed(2)}
-                  </p>
-                  <p className="text-emerald-400/70 text-xs">
-                    Divided among {tripAttendees.length} attendees
-                  </p>
+            {selectedTrip?.paymentStatus === 'NOT_ASSIGNED' && (
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 w-full">
+                <div className="space-y-2 sm:space-y-0 sm:space-x-4 w-full sm:w-auto">
+                  <Label className="text-sm">Total Trip Cost (₹)</Label>
+                  <input
+                    type="number"
+                    value={totalCost}
+                    onChange={(e) => setTotalCost(e.target.value)}
+                    className="bg-slate-800 border-slate-700 text-white w-full sm:w-48 px-3 py-2 rounded-md"
+                    placeholder="Enter total cost"
+                  />
                 </div>
-              )}
 
-              <div className="flex items-center gap-2 w-full sm:w-auto">
+                {totalCost && selectedTrip && (
+                  <div className="p-3 bg-emerald-500/10 rounded-lg border border-emerald-500/20 flex items-center gap-4 text-sm">
+                    <p className="text-emerald-400">Cost per person</p>
+                    <p className="text-2xl font-bold text-emerald-400">
+                      ₹{(parseFloat(totalCost) / (tripAttendees.length || 1)).toFixed(2)}
+                    </p>
+                    <p className="text-emerald-400/70 text-xs">
+                      Divided among {tripAttendees.length} attendees
+                    </p>
+                  </div>
+                )}
+
+                <div className="flex items-center gap-2 w-full sm:w-auto">
+                  <Button
+                    variant="outline"
+                    onClick={() => { setSelectedTrip(null); setTripAttendees([]); setTotalCost(''); }}
+                    className="border-slate-700 text-slate-300 hover:bg-slate-800"
+                    disabled={openingPayment}
+                  >
+                    Close
+                  </Button>
+                  <Button
+                    onClick={handleOpenPayment}
+                    className="bg-emerald-500 hover:bg-emerald-600"
+                    disabled={openingPayment || !totalCost || tripAttendees.length === 0}
+                  >
+                    {openingPayment ? 'Opening...' : 'Assign Payment'}
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {selectedTrip?.paymentStatus === 'PAYMENT_PENDING' && (
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 w-full">
+                <div className="p-3 bg-amber-500/10 rounded-lg border border-amber-500/20 flex items-center gap-4 text-sm">
+                  <Clock className="w-5 h-5 text-amber-400" />
+                  <div>
+                    <p className="text-amber-400 font-medium">Payment Pending</p>
+                    <p className="text-amber-300/80 text-sm">
+                      {selectedTrip.summary.pendingCount} of {selectedTrip.summary.totalAttendees} attendees yet to pay
+                    </p>
+                  </div>
+                </div>
                 <Button
                   variant="outline"
-                  onClick={() => { setSelectedTrip(null); setTripAttendees([]); setTotalCost(''); }}
+                  onClick={() => { setSelectedTrip(null); setTripAttendees([]); }}
                   className="border-slate-700 text-slate-300 hover:bg-slate-800"
-                  disabled={openingPayment}
                 >
                   Close
                 </Button>
+              </div>
+            )}
+
+            {selectedTrip?.paymentStatus === 'PAYMENT_COMPLETED' && (
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 w-full">
+                <div className="p-3 bg-emerald-500/10 rounded-lg border border-emerald-500/20 flex items-center gap-4 text-sm">
+                  <CheckCircle className="w-5 h-5 text-emerald-400" />
+                  <div>
+                    <p className="text-emerald-400 font-medium">Payment Completed</p>
+                    <p className="text-emerald-300/80 text-sm">
+                      All {selectedTrip.summary.totalAttendees} attendees have paid
+                    </p>
+                  </div>
+                </div>
                 <Button
-                  onClick={handleOpenPaymentWindow}
-                  className="bg-emerald-500 hover:bg-emerald-600"
-                  disabled={openingPayment || !totalCost || tripAttendees.length === 0}
+                  variant="outline"
+                  onClick={() => { setSelectedTrip(null); setTripAttendees([]); }}
+                  className="border-slate-700 text-slate-300 hover:bg-slate-800"
                 >
-                  {openingPayment ? 'Opening...' : 'Calculate & Open Payment'}
+                  Close
                 </Button>
               </div>
-            </div>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>

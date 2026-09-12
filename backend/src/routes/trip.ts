@@ -24,7 +24,6 @@ import {
   getEffectiveTripStatus,
   isBookingCurrentlyOpen,
   canUserCancelBooking,
-  syncTripStatuses,
   syncSingleTripStatus,
   EffectiveTripStatus
 } from '../utils/tripStatus';
@@ -165,10 +164,16 @@ const updateTripSchema = z.object({
 router.get('/', authenticate, async (req: AuthenticatedRequest, res) => {
   const requestId = (req as any).requestId || 'unknown';
   const overallStart = process.hrtime.bigint();
+  const userEmail = req.user?.email || 'unknown';
+  const isPolling = req.headers['x-request-source'] === 'polling' || req.query._poll === 'true';
   
+  // Request tracing
+  console.log(`[Trip GET /] Request ${requestId} - User: ${userEmail}, URL: ${req.originalUrl}, Polling: ${isPolling}`);
+
   try {
-    // Sync trip statuses before querying to ensure database status is up-to-date
-    await syncTripStatuses(prisma);
+    // Trip statuses are synced by the background job every 60 seconds.
+    // We do NOT call syncTripStatuses here to avoid unnecessary database load.
+    // Effective status is computed on-the-fly for display using getEffectiveTripStatus().
 
     const { 
       status, 
@@ -189,6 +194,10 @@ router.get('/', authenticate, async (req: AuthenticatedRequest, res) => {
       where.status = status as TripStatus;
     }
     
+    // For user-facing upcoming trips: only fetch the latest trip (by date) to minimize DB load
+    // Admin panel (no upcoming filter) gets full paginated list
+    const isUserFacingUpcoming = upcoming === 'true' && !status && !myBookings;
+    
     if (upcoming === 'true') {
       // Show trips where booking window is currently open OR departure is in the future
       // departureTime is stored as correct UTC instant; Date.now() is also UTC absolute — so this is correct.
@@ -208,13 +217,25 @@ router.get('/', authenticate, async (req: AuthenticatedRequest, res) => {
       };
     }
 
-    // Time the count query
-    const countStart = process.hrtime.bigint();
-    const total = await prisma.trip.count({ where });
-    const countMs = Number(process.hrtime.bigint() - countStart) / 1_000_000;
+    // Time the count query (skip for user-facing upcoming to avoid extra query)
+    let total = 0;
+    let countMs = 0;
+    if (!isUserFacingUpcoming) {
+      const countStart = process.hrtime.bigint();
+      total = await prisma.trip.count({ where });
+      countMs = Number(process.hrtime.bigint() - countStart) / 1_000_000;
+    } else {
+      // For user-facing upcoming, we only need to know if there's at least one trip
+      const countStart = process.hrtime.bigint();
+      total = await prisma.trip.count({ where });
+      countMs = Number(process.hrtime.bigint() - countStart) / 1_000_000;
+    }
 
     // Time the findMany query - include cabs with currentOccupancy for effective status calculation
     const findStart = process.hrtime.bigint();
+    
+    // For user-facing upcoming: fetch only the latest upcoming trip (by date)
+    // For admin/other: use pagination
     const trips = await prisma.trip.findMany({
       where,
       include: {
@@ -236,14 +257,13 @@ router.get('/', authenticate, async (req: AuthenticatedRequest, res) => {
         }
       },
       orderBy: { date: 'asc' },
-      skip,
-      take: limitNum
+      skip: isUserFacingUpcoming ? 0 : skip,
+      take: isUserFacingUpcoming ? 1 : limitNum
     });
     const findMs = Number(process.hrtime.bigint() - findStart) / 1_000_000;
 
     const now = new Date();
     // Add user booking status and effective status to each trip
-    // Now that we've synced, effectiveStatus should match the persisted status for non-cancelled trips
     const tripsWithBookingStatus = trips.map(trip => ({
       ...trip,
       userBooking: trip.bookings.length > 0 ? trip.bookings[0] : null,
@@ -578,32 +598,24 @@ router.patch('/:id/cancel', authenticate, authorizeAdmin, async (req: Authentica
   }
 });
 
-// Open payment window (admin only)
+// Open payment window (admin only) - can only be done ONCE per trip
+// Once payment is assigned, it becomes immutable
 router.patch('/:id/payment-window', authenticate, authorizeAdmin, async (req: AuthenticatedRequest, res) => {
   try {
     const { id } = req.params;
-    const { action, totalCost } = req.body; // 'open' or 'close'
+    const { action, totalCost } = req.body; // only 'open' is now supported
 
-    if (!action || !['open', 'close'].includes(action)) {
+    if (!action || action !== 'open') {
       return res.status(400).json({
         success: false,
-        error: 'Invalid action. Use "open" or "close"'
+        error: 'Invalid action. Only "open" is supported. Payment cannot be closed or reopened once assigned.'
       });
     }
 
-    // Sync trip status first to ensure we have the latest status
-    await syncSingleTripStatus(prisma, id);
-
-    // Get all eligible bookings for this trip (CONFIRMED or ATTENDED, not CANCELLED/NO_SHOW)
-    const eligibleBookings = await prisma.booking.findMany({
-      where: {
-        tripId: id,
-        status: { in: ['CONFIRMED', 'ATTENDED'] }
-      }
-    });
-
+    // Check if payment has already been assigned for this trip
     const trip = await prisma.trip.findUnique({
-      where: { id }
+      where: { id },
+      select: { paymentAssigned: true, paymentWindowOpen: true }
     });
 
     if (!trip) {
@@ -613,58 +625,70 @@ router.patch('/:id/payment-window', authenticate, authorizeAdmin, async (req: Au
       });
     }
 
-    // If opening payment window without totalCost, just toggle the window
-    // Admin can enter totalCost later
-    let updateData: any = {
-      paymentWindowOpen: action === 'open'
-    };
-
-    // If opening payment window with totalCost, calculate cost per person and create payment records
-    if (action === 'open' && totalCost) {
-      if (eligibleBookings.length === 0) {
-        return res.status(400).json({
-          success: false,
-          error: 'No eligible bookings found for this trip'
-        });
-      }
-
-      const costPerPerson = totalCost / eligibleBookings.length;
-      updateData.totalCost = totalCost;
-      updateData.costPerPerson = costPerPerson;
-    }
-
-    const updatedTrip = await prisma.trip.update({
-      where: { id },
-      data: updateData
-    });
-
-    // If opening payment window with totalCost, create payment records for all eligible bookings
-    if (action === 'open' && totalCost) {
-      await prisma.payment.createMany({
-        data: eligibleBookings.map(booking => ({
-          userId: booking.userId,
-          tripId: id,
-          bookingId: booking.id,
-          amount: updateData.costPerPerson,
-          status: 'PENDING'
-        })),
-        skipDuplicates: true
+    if (trip.paymentAssigned) {
+      return res.status(400).json({
+        success: false,
+        error: 'Payment has already been assigned for this trip. It cannot be modified or reassigned.'
       });
     }
 
-    // If closing payment window, we might want to clean up PENDING payments that were never paid
-    // But for now, we just close the window - payments remain for tracking
+    // Get all eligible bookings for this trip (CONFIRMED or ATTENDED, not CANCELLED/NO_SHOW)
+    const eligibleBookings = await prisma.booking.findMany({
+      where: {
+        tripId: id,
+        status: { in: ['CONFIRMED', 'ATTENDED'] }
+      }
+    });
+
+    if (eligibleBookings.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'No eligible bookings found for this trip'
+      });
+    }
+
+    if (!totalCost || totalCost <= 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Total cost is required and must be greater than 0'
+      });
+    }
+
+    const costPerPerson = totalCost / eligibleBookings.length;
+
+    // Update trip with payment details and mark payment as assigned
+    const updatedTrip = await prisma.trip.update({
+      where: { id },
+      data: {
+        totalCost,
+        costPerPerson,
+        paymentWindowOpen: true,
+        paymentAssigned: true
+      }
+    });
+
+    // Create payment records for all eligible bookings
+    await prisma.payment.createMany({
+      data: eligibleBookings.map(booking => ({
+        userId: booking.userId,
+        tripId: id,
+        bookingId: booking.id,
+        amount: costPerPerson,
+        status: 'PENDING'
+      })),
+      skipDuplicates: true
+    });
 
     res.json({
       success: true,
       data: updatedTrip,
-      message: `Payment window ${action}ed successfully`
+      message: 'Payment window opened successfully. Payment amount is now final and cannot be changed.'
     });
   } catch (error) {
-    console.error('Error updating payment window:', error);
+    console.error('Error opening payment window:', error);
     res.status(500).json({
       success: false,
-      error: 'Failed to update payment window'
+      error: 'Failed to open payment window'
     });
   }
 });

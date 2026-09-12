@@ -23,6 +23,10 @@ const resetPaymentSchema = z.object({
   tripId: z.string().uuid('Invalid trip ID')
 });
 
+const checkPaymentStatusSchema = z.object({
+  tripId: z.string().uuid('Invalid trip ID')
+});
+
 // Get user's payments
 router.get('/my-payments', authenticate, async (req: AuthenticatedRequest, res) => {
   const requestId = (req as any).requestId || 'unknown';

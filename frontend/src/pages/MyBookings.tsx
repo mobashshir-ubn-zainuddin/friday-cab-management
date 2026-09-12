@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { bookingApi, paymentApi } from '@/services/api';
 import type { Booking, BookingStatus } from '@/types';
@@ -181,13 +181,11 @@ const MyBookings = () => {
       const message = error.response?.data?.error || 'Failed to initiate payment';
       toast.error(message);
       stopPolling();
-    } finally {
-      setProcessingPayment(null);
     }
   };
 
   // Polling mechanism
-  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const pollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollingPaymentIdRef = useRef<string | null>(null);
 
   const startPolling = useCallback((tripId: string, razorpayOrderId: string) => {

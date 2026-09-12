@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { bookingApi, paymentApi } from '@/services/api';
 import type { Booking, BookingStatus } from '@/types';
@@ -64,6 +64,66 @@ const MyBookings = () => {
     loadRazorpayScript();
   }, []);
 
+  // ── Polling mechanism ────────────────────────────────────────────────────────
+  const pollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollingTripIdRef = useRef<string | null>(null);
+
+  const stopPolling = useCallback(() => {
+    if (pollingIntervalRef.current !== null) {
+      clearInterval(pollingIntervalRef.current);
+      pollingIntervalRef.current = null;
+    }
+    pollingTripIdRef.current = null;
+  }, []);
+
+  useEffect(() => {
+    return () => stopPolling();
+  }, [stopPolling]);
+
+  const startPolling = useCallback((tripId: string, paymentId: string) => {
+    stopPolling();
+    pollingTripIdRef.current = tripId;
+    const maxAttempts = 100;
+    let attempts = 0;
+
+    const poll = async () => {
+      if (pollingTripIdRef.current !== tripId) return;
+      attempts++;
+      if (attempts > maxAttempts) { stopPolling(); return; }
+
+      try {
+        const statusData = await paymentApi.checkStatus(tripId);
+        const paymentData = (statusData as any).data;
+
+        if (paymentData?.status === 'COMPLETED') {
+          stopPolling();
+          setBookings(prev => prev.map(b =>
+            b.payment?.id === paymentId
+              ? { ...b, payment: { ...b.payment!, status: 'COMPLETED' as const, razorpayPaymentId: paymentData.razorpayPaymentId, paidAt: paymentData.paidAt } }
+              : b
+          ));
+          setProcessingPayment(null);
+          toast.success('Payment successful!');
+          fetchBookings();
+        } else if (paymentData?.status === 'FAILED') {
+          stopPolling();
+          setBookings(prev => prev.map(b =>
+            b.payment?.id === paymentId
+              ? { ...b, payment: { ...b.payment!, status: 'FAILED' as const } }
+              : b
+          ));
+          setProcessingPayment(null);
+          toast.error('Payment failed. Please try again.');
+          fetchBookings();
+        }
+      } catch (err) {
+        console.error('[MyBookings] Polling error:', err);
+      }
+    };
+
+    pollingIntervalRef.current = setInterval(poll, 3000);
+  }, [stopPolling]);
+
   const fetchBookings = async () => {
     try {
       const data = await bookingApi.getMyBookings();
@@ -78,87 +138,100 @@ const MyBookings = () => {
 
   const handlePayNow = async (payment: any, tripTitle: string, tripId: string) => {
     setProcessingPayment(payment.id);
-    
+
     try {
-      // Create order
       const orderData = await paymentApi.createOrder(tripId);
-      
-      // Initialize Razorpay
+      const razorpayOrderId = (orderData as any).orderId;
+
       const options = {
         key: (orderData as any).keyId,
         amount: (orderData as any).amount,
         currency: (orderData as any).currency,
-        name: 'Cab Management System',
+        name: 'Friday Cab System',
         description: `Payment for ${tripTitle}`,
-        order_id: (orderData as any).orderId,
+        order_id: razorpayOrderId,
         config: {
           display: {
             blocks: {
               upi: {
                 name: 'Pay via UPI',
-                instruments: [
-                  {
-                    method: 'upi'
-                  }
-                ]
+                instruments: [{ method: 'upi' }]
               }
             },
             sequence: ['block.upi'],
-            preferences: {
-              show_default_blocks: false
-            }
+            preferences: { show_default_blocks: false }
           }
         },
         handler: async (response: any) => {
           try {
-            // Verify payment
             await paymentApi.verify({
               razorpayOrderId: response.razorpay_order_id,
               razorpayPaymentId: response.razorpay_payment_id,
               razorpaySignature: response.razorpay_signature
             });
-            
-            // Optimistic update: mark payment as completed
-            setBookings(prev => prev.map(b => 
-              b.payment?.id === payment.id 
+            stopPolling();
+            setBookings(prev => prev.map(b =>
+              b.payment?.id === payment.id
                 ? { ...b, payment: { ...b.payment!, status: 'COMPLETED' as const, razorpayPaymentId: response.razorpay_payment_id, paidAt: new Date().toISOString() } }
                 : b
             ));
+            setProcessingPayment(null);
             toast.success('Payment successful!');
+            fetchBookings();
           } catch (error) {
             console.error('Payment verification failed:', error);
-            toast.error('Payment verification failed. Please contact support.');
+            toast.error('Payment verification failed. Use Check Status to confirm.');
           }
         },
-        prefill: {
-          name: tripTitle,
-          email: '',
-          contact: ''
-        },
-        theme: {
-          color: '#10b981'
-        },
+        prefill: { name: tripTitle, email: '', contact: '' },
+        theme: { color: '#10b981' },
         modal: {
           ondismiss: async () => {
-            setProcessingPayment(null);
-            // Reset payment status if user cancelled checkout
+            // Check Razorpay API before resetting — user may have paid via QR
             try {
-              await paymentApi.reset(tripId);
-              // Refresh bookings to get updated status
-              fetchBookings();
+              const statusData = await paymentApi.checkStatus(tripId);
+              const currentStatus = (statusData as any).data?.status;
+
+              if (currentStatus === 'COMPLETED') {
+                stopPolling();
+                setBookings(prev => prev.map(b =>
+                  b.payment?.id === payment.id
+                    ? { ...b, payment: { ...b.payment!, status: 'COMPLETED' as const, razorpayPaymentId: (statusData as any).data?.razorpayPaymentId, paidAt: (statusData as any).data?.paidAt } }
+                    : b
+                ));
+                setProcessingPayment(null);
+                toast.success('Payment detected and confirmed!');
+                fetchBookings();
+              } else if (currentStatus === 'PROCESSING' || currentStatus === 'PENDING') {
+                try { await paymentApi.reset(tripId); } catch { /* already PENDING is fine */ }
+                stopPolling();
+                setProcessingPayment(null);
+                fetchBookings();
+              } else {
+                stopPolling();
+                setProcessingPayment(null);
+                fetchBookings();
+              }
             } catch (error) {
-              console.error('Failed to reset payment:', error);
+              console.error('Failed to check payment status on dismiss:', error);
+              stopPolling();
+              setProcessingPayment(null);
+              fetchBookings();
             }
           }
         }
       };
 
+      // Start polling BEFORE opening modal
+      startPolling(tripId, payment.id);
+
       const razorpay = new (window as any).Razorpay(options);
       razorpay.open();
+      // razorpay.open() is non-blocking — cleanup via handler/ondismiss
     } catch (error: any) {
       const message = error.response?.data?.error || 'Failed to initiate payment';
       toast.error(message);
-    } finally {
+      stopPolling();
       setProcessingPayment(null);
     }
   };

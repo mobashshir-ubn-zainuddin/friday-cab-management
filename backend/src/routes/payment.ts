@@ -4,7 +4,7 @@ import { prisma } from '../utils/prisma';
 import { authenticate } from '../middleware/auth';
 import { validateBody } from '../middleware/validation';
 import { AuthenticatedRequest } from '../types';
-import { createOrder, verifyPaymentSignature } from '../utils/razorpay';
+import { createOrder, verifyPaymentSignature, fetchOrderPayments } from '../utils/razorpay';
 
 const router = Router();
 
@@ -20,6 +20,10 @@ const verifyPaymentSchema = z.object({
 });
 
 const resetPaymentSchema = z.object({
+  tripId: z.string().uuid('Invalid trip ID')
+});
+
+const checkPaymentStatusSchema = z.object({
   tripId: z.string().uuid('Invalid trip ID')
 });
 
@@ -168,7 +172,6 @@ router.post('/create-order', authenticate, validateBody(createPaymentSchema), as
 
     let orderId = payment.razorpayOrderId;
 
-    // If payment is in PROCESSING but has no order ID, or if we want to create a fresh order
     // Create a new Razorpay order if no existing order ID
     if (!orderId) {
       const order = await createOrder(
@@ -218,32 +221,51 @@ router.post('/create-order', authenticate, validateBody(createPaymentSchema), as
   }
 });
 
-// Verify and complete payment
+// Verify and complete payment (called by frontend Razorpay handler on success)
 router.post('/verify', authenticate, validateBody(verifyPaymentSchema), async (req: AuthenticatedRequest, res) => {
   try {
     const { razorpayOrderId, razorpayPaymentId, razorpaySignature } = req.body;
+    const userId = req.user!.id;
 
-    // Verify signature
+    // Server-side signature verification — never trust client-side payment status
     const isValid = verifyPaymentSignature(razorpayOrderId, razorpayPaymentId, razorpaySignature);
 
     if (!isValid) {
+      console.warn(`[Payment /verify] Invalid signature for order ${razorpayOrderId}, paymentId ${razorpayPaymentId}, userId ${userId}`);
       return res.status(400).json({
         success: false,
         error: 'Invalid payment signature'
       });
     }
 
-    // Find and update payment
+    // Find payment by Razorpay order ID
     const payment = await prisma.payment.findFirst({
-      where: {
-        razorpayOrderId
-      }
+      where: { razorpayOrderId }
     });
 
     if (!payment) {
       return res.status(404).json({
         success: false,
         error: 'Payment not found'
+      });
+    }
+
+    // Ownership check — prevent user A from verifying user B's payment
+    if (payment.userId !== userId) {
+      console.warn(`[Payment /verify] Ownership mismatch: userId ${userId} tried to verify payment ${payment.id} owned by ${payment.userId}`);
+      return res.status(403).json({
+        success: false,
+        error: 'Access denied'
+      });
+    }
+
+    // Idempotent: if already COMPLETED, return success without re-updating
+    if (payment.status === 'COMPLETED') {
+      console.log(`[Payment /verify] Payment ${payment.id} already COMPLETED, returning idempotent success`);
+      return res.json({
+        success: true,
+        data: payment,
+        message: 'Payment already completed'
       });
     }
 
@@ -256,6 +278,8 @@ router.post('/verify', authenticate, validateBody(verifyPaymentSchema), async (r
         paidAt: new Date()
       }
     });
+
+    console.log(`[Payment /verify] Payment ${payment.id} marked COMPLETED via frontend handler`);
 
     res.json({
       success: true,
@@ -271,7 +295,134 @@ router.post('/verify', authenticate, validateBody(verifyPaymentSchema), async (r
   }
 });
 
+// Check payment status (polling endpoint — queries Razorpay API for accuracy)
+// This is the key fix for QR/UPI async payments that complete without the frontend handler firing
+router.post('/check-status', authenticate, validateBody(checkPaymentStatusSchema), async (req: AuthenticatedRequest, res) => {
+  try {
+    const { tripId } = req.body;
+    const userId = req.user!.id;
+
+    const payment = await prisma.payment.findFirst({
+      where: {
+        userId,
+        tripId
+      },
+      include: {
+        trip: true
+      }
+    });
+
+    if (!payment) {
+      return res.status(404).json({
+        success: false,
+        error: 'Payment not found'
+      });
+    }
+
+    // If already COMPLETED or FAILED in DB, return immediately (no need to call Razorpay)
+    if (payment.status === 'COMPLETED' || payment.status === 'FAILED' || payment.status === 'REFUNDED') {
+      return res.json({
+        success: true,
+        data: {
+          id: payment.id,
+          status: payment.status,
+          amount: payment.amount,
+          razorpayOrderId: payment.razorpayOrderId,
+          razorpayPaymentId: payment.razorpayPaymentId,
+          paidAt: payment.paidAt,
+          createdAt: payment.createdAt
+        }
+      });
+    }
+
+    // For PROCESSING payments with a Razorpay order, query Razorpay API directly
+    // This detects QR/UPI payments that completed asynchronously (no frontend handler)
+    if (payment.status === 'PROCESSING' && payment.razorpayOrderId) {
+      try {
+        const rzpPayments = await fetchOrderPayments(payment.razorpayOrderId);
+        const items: any[] = rzpPayments?.items || [];
+
+        // Check if any payment on this order is captured (successfully paid)
+        const captured = items.find((p: any) => p.status === 'captured');
+        const failed = items.find((p: any) => p.status === 'failed');
+
+        if (captured) {
+          // Payment captured on Razorpay's end — update our DB
+          const updatedPayment = await prisma.payment.update({
+            where: { id: payment.id },
+            data: {
+              status: 'COMPLETED',
+              razorpayPaymentId: captured.id,
+              paidAt: new Date()
+            }
+          });
+          console.log(`[Payment /check-status] Payment ${payment.id} auto-completed via Razorpay API poll (paymentId: ${captured.id})`);
+          return res.json({
+            success: true,
+            data: {
+              id: updatedPayment.id,
+              status: updatedPayment.status,
+              amount: updatedPayment.amount,
+              razorpayOrderId: updatedPayment.razorpayOrderId,
+              razorpayPaymentId: updatedPayment.razorpayPaymentId,
+              paidAt: updatedPayment.paidAt,
+              createdAt: updatedPayment.createdAt
+            }
+          });
+        } else if (failed && !captured) {
+          // All attempts failed and none captured
+          const updatedPayment = await prisma.payment.update({
+            where: { id: payment.id },
+            data: {
+              status: 'FAILED',
+              razorpayPaymentId: failed.id
+            }
+          });
+          console.log(`[Payment /check-status] Payment ${payment.id} marked FAILED via Razorpay API poll`);
+          return res.json({
+            success: true,
+            data: {
+              id: updatedPayment.id,
+              status: updatedPayment.status,
+              amount: updatedPayment.amount,
+              razorpayOrderId: updatedPayment.razorpayOrderId,
+              razorpayPaymentId: updatedPayment.razorpayPaymentId,
+              paidAt: updatedPayment.paidAt,
+              createdAt: updatedPayment.createdAt
+            }
+          });
+        }
+        // If no captured/failed yet, fall through and return current PROCESSING status
+      } catch (rzpError) {
+        // If Razorpay API call fails, log it but don't crash — just return DB state
+        console.error(`[Payment /check-status] Razorpay API call failed for order ${payment.razorpayOrderId}:`, rzpError);
+      }
+    }
+
+    // Return current DB status (PENDING, PROCESSING, or Razorpay API was unavailable)
+    res.json({
+      success: true,
+      data: {
+        id: payment.id,
+        status: payment.status,
+        amount: payment.amount,
+        razorpayOrderId: payment.razorpayOrderId,
+        razorpayPaymentId: payment.razorpayPaymentId,
+        paidAt: payment.paidAt,
+        createdAt: payment.createdAt
+      }
+    });
+  } catch (error) {
+    console.error('Error checking payment status:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to check payment status'
+    });
+  }
+});
+
 // Reset payment status from PROCESSING back to PENDING (for cancelled/abandoned checkout)
+// Guards against resetting a payment that Razorpay already captured
 router.post('/reset', authenticate, validateBody(resetPaymentSchema), async (req: AuthenticatedRequest, res) => {
   try {
     const { tripId } = req.body;
@@ -296,7 +447,38 @@ router.post('/reset', authenticate, validateBody(resetPaymentSchema), async (req
       });
     }
 
-    // Reset payment status back to PENDING and clear razorpayOrderId
+    // Safety check: before resetting, verify Razorpay hasn't already captured this payment
+    // This prevents data loss when a user closes QR after paying on mobile
+    if (payment.razorpayOrderId) {
+      try {
+        const rzpPayments = await fetchOrderPayments(payment.razorpayOrderId);
+        const items: any[] = rzpPayments?.items || [];
+        const captured = items.find((p: any) => p.status === 'captured');
+
+        if (captured) {
+          // Razorpay already captured — mark as COMPLETED instead of resetting
+          const completedPayment = await prisma.payment.update({
+            where: { id: payment.id },
+            data: {
+              status: 'COMPLETED',
+              razorpayPaymentId: captured.id,
+              paidAt: new Date()
+            }
+          });
+          console.log(`[Payment /reset] Prevented reset — payment ${payment.id} already captured by Razorpay (paymentId: ${captured.id})`);
+          return res.json({
+            success: true,
+            data: completedPayment,
+            message: 'Payment was already completed — marked as COMPLETED'
+          });
+        }
+      } catch (rzpError) {
+        // If Razorpay API fails, log and proceed with reset as a safe fallback
+        console.error(`[Payment /reset] Could not verify Razorpay state for order ${payment.razorpayOrderId}:`, rzpError);
+      }
+    }
+
+    // Safe to reset — no captured payment found
     const updatedPayment = await prisma.payment.update({
       where: { id: payment.id },
       data: {

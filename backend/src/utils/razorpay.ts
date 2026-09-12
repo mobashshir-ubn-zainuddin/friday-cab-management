@@ -49,7 +49,7 @@ export const verifyWebhookSignature = (rawBody: Buffer | string, signature: stri
   }
 };
 
-// Verify payment signature
+// Verify payment signature (used when frontend handler fires after successful payment)
 export const verifyPaymentSignature = (
   orderId: string,
   paymentId: string,
@@ -69,13 +69,36 @@ export const verifyPaymentSignature = (
   }
 };
 
-// Fetch payment details
+// Fetch payment details by Razorpay payment ID
 export const fetchPayment = async (paymentId: string) => {
   try {
     const payment = await razorpay.payments.fetch(paymentId);
     return payment;
   } catch (error) {
     console.error('Error fetching payment:', error);
+    throw error;
+  }
+};
+
+// Fetch order details (status: paid/attempted/created)
+export const fetchOrder = async (orderId: string) => {
+  try {
+    const order = await razorpay.orders.fetch(orderId);
+    return order;
+  } catch (error) {
+    console.error('Error fetching Razorpay order:', error);
+    throw error;
+  }
+};
+
+// Fetch all payments linked to a Razorpay order
+// This is the key method for QR/UPI async payment detection
+export const fetchOrderPayments = async (orderId: string) => {
+  try {
+    const payments = await (razorpay.orders as any).fetchPayments(orderId);
+    return payments;
+  } catch (error) {
+    console.error('Error fetching order payments:', error);
     throw error;
   }
 };

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { paymentApi } from '@/services/api';
 import type { Payment, PaymentStatus } from '@/types';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -14,7 +14,9 @@ import {
   Calendar,
   IndianRupee,
   ArrowRight,
-  Receipt
+  Receipt,
+  RefreshCw,
+  Loader2
 } from 'lucide-react';
 import { formatDateIST } from '@/utils/timezone';
 
@@ -57,31 +59,103 @@ const Payments = () => {
     }
   };
 
+  // ── Polling mechanism ────────────────────────────────────────────────────────
+  // Uses a stable interval ref to avoid duplicate timers.
+  // stopPolling() is safe to call multiple times.
+  const pollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollingTripIdRef = useRef<string | null>(null);
+
+  const stopPolling = useCallback(() => {
+    if (pollingIntervalRef.current !== null) {
+      clearInterval(pollingIntervalRef.current);
+      pollingIntervalRef.current = null;
+    }
+    pollingTripIdRef.current = null;
+  }, []);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => stopPolling();
+  }, [stopPolling]);
+
+  const startPolling = useCallback((tripId: string) => {
+    // Clear any existing polling before starting a new one
+    stopPolling();
+    pollingTripIdRef.current = tripId;
+
+    const maxAttempts = 100; // ~5 minutes at 3-second intervals
+    let attempts = 0;
+
+    const poll = async () => {
+      // Guard: stop if tripId changed or polling was cancelled
+      if (pollingTripIdRef.current !== tripId) return;
+
+      attempts++;
+      if (attempts > maxAttempts) {
+        stopPolling();
+        console.warn('[Payments] Polling stopped: max attempts reached');
+        return;
+      }
+
+      try {
+        const statusData = await paymentApi.checkStatus(tripId);
+        const paymentData = (statusData as any).data;
+
+        if (paymentData?.status === 'COMPLETED') {
+          stopPolling();
+          setPayments(prev => prev.map(p =>
+            p.tripId === tripId
+              ? {
+                  ...p,
+                  status: 'COMPLETED' as const,
+                  razorpayPaymentId: paymentData.razorpayPaymentId,
+                  paidAt: paymentData.paidAt
+                }
+              : p
+          ));
+          setProcessingPayment(null);
+          toast.success('Payment successful! Your payment has been confirmed.');
+          fetchPayments(); // Full refresh to get accurate server state
+        } else if (paymentData?.status === 'FAILED') {
+          stopPolling();
+          setPayments(prev => prev.map(p =>
+            p.tripId === tripId ? { ...p, status: 'FAILED' as const } : p
+          ));
+          setProcessingPayment(null);
+          toast.error('Payment failed. Please try again.');
+          fetchPayments();
+        }
+        // PENDING/PROCESSING: continue polling
+      } catch (error) {
+        console.error('[Payments] Polling error:', error);
+        // Don't stop polling on network errors — retry next interval
+      }
+    };
+
+    pollingIntervalRef.current = setInterval(poll, 3000);
+  }, [stopPolling]);
+
+  // ── Pay Now handler ──────────────────────────────────────────────────────────
   const handlePayNow = async (payment: Payment) => {
     setProcessingPayment(payment.id);
-    
+
     try {
-      // Create order
       const orderData = await paymentApi.createOrder(payment.tripId);
-      
-      // Initialize Razorpay
+      const razorpayOrderId = (orderData as any).orderId;
+
       const options = {
         key: (orderData as any).keyId,
         amount: (orderData as any).amount,
         currency: (orderData as any).currency,
-        name: 'Cab Management System',
+        name: 'Friday Cab System',
         description: `Payment for ${payment.trip?.title}`,
-        order_id: (orderData as any).orderId,
+        order_id: razorpayOrderId,
         config: {
           display: {
             blocks: {
               upi: {
                 name: 'Pay via UPI',
-                instruments: [
-                  {
-                    method: 'upi'
-                  }
-                ]
+                instruments: [{ method: 'upi' }]
               }
             },
             sequence: ['block.upi'],
@@ -91,28 +165,36 @@ const Payments = () => {
           }
         },
         handler: async (response: any) => {
+          // Frontend handler fires immediately on UPI app approval / card success
+          // Server-side verification is still mandatory
           try {
-            // Verify payment
             await paymentApi.verify({
               razorpayOrderId: response.razorpay_order_id,
               razorpayPaymentId: response.razorpay_payment_id,
               razorpaySignature: response.razorpay_signature
             });
-            
-            // Optimistic update: mark payment as completed
-            setPayments(prev => prev.map(p => 
-              p.id === payment.id 
-                ? { ...p, status: 'COMPLETED' as const, razorpayPaymentId: response.razorpay_payment_id, paidAt: new Date().toISOString() }
+            stopPolling();
+            setPayments(prev => prev.map(p =>
+              p.id === payment.id
+                ? {
+                    ...p,
+                    status: 'COMPLETED' as const,
+                    razorpayPaymentId: response.razorpay_payment_id,
+                    paidAt: new Date().toISOString()
+                  }
                 : p
             ));
+            setProcessingPayment(null);
             toast.success('Payment successful!');
+            fetchPayments();
           } catch (error) {
             console.error('Payment verification failed:', error);
-            toast.error('Payment verification failed. Please contact support.');
+            toast.error('Payment verification failed. Please use "Check Status" to confirm.');
+            // Keep polling — webhook or check-status will detect the real state
           }
         },
         prefill: {
-          name: payment.trip?.title,
+          name: payment.trip?.title || '',
           email: '',
           contact: ''
         },
@@ -121,29 +203,103 @@ const Payments = () => {
         },
         modal: {
           ondismiss: async () => {
-            setProcessingPayment(null);
-            // Reset payment status if user cancelled checkout
+            // DO NOT immediately reset — the user may have paid via QR/UPI and closed the modal.
+            // Check with the backend first whether Razorpay already captured the payment.
             try {
-              await paymentApi.reset(payment.tripId);
-              // Refresh payments to get updated status
-              fetchPayments();
+              const statusData = await paymentApi.checkStatus(payment.tripId);
+              const currentStatus = (statusData as any).data?.status;
+
+              if (currentStatus === 'COMPLETED') {
+                // Payment was captured — update UI and stop polling
+                stopPolling();
+                setPayments(prev => prev.map(p =>
+                  p.id === payment.id
+                    ? {
+                        ...p,
+                        status: 'COMPLETED' as const,
+                        razorpayPaymentId: (statusData as any).data?.razorpayPaymentId,
+                        paidAt: (statusData as any).data?.paidAt
+                      }
+                    : p
+                ));
+                setProcessingPayment(null);
+                toast.success('Payment detected and confirmed!');
+                fetchPayments();
+              } else if (currentStatus === 'PROCESSING' || currentStatus === 'PENDING') {
+                // No captured payment — safe to reset so user can retry
+                try {
+                  await paymentApi.reset(payment.tripId);
+                } catch {
+                  // reset endpoint may 404 if already in PENDING — that's fine
+                }
+                stopPolling();
+                setProcessingPayment(null);
+                fetchPayments();
+              } else {
+                stopPolling();
+                setProcessingPayment(null);
+                fetchPayments();
+              }
             } catch (error) {
-              console.error('Failed to reset payment:', error);
+              console.error('Failed to check payment status on dismiss:', error);
+              stopPolling();
+              setProcessingPayment(null);
+              fetchPayments();
             }
           }
         }
       };
 
+      // Start polling BEFORE opening modal so QR/UPI async completions are detected
+      startPolling(payment.tripId);
+
       const razorpay = new (window as any).Razorpay(options);
       razorpay.open();
+      // razorpay.open() is non-blocking — cleanup happens via handler/ondismiss
     } catch (error: any) {
+      // Only reach here if createOrder or script loading failed — modal never opened
       const message = error.response?.data?.error || 'Failed to initiate payment';
       toast.error(message);
-    } finally {
+      stopPolling();
       setProcessingPayment(null);
     }
   };
 
+  // ── Manual check status handler ──────────────────────────────────────────────
+  const handleCheckStatus = async (payment: Payment) => {
+    try {
+      const statusData = await paymentApi.checkStatus(payment.tripId);
+      const paymentData = (statusData as any).data;
+
+      if (paymentData?.status === 'COMPLETED') {
+        setPayments(prev => prev.map(p =>
+          p.id === payment.id
+            ? {
+                ...p,
+                status: 'COMPLETED' as const,
+                razorpayPaymentId: paymentData.razorpayPaymentId,
+                paidAt: paymentData.paidAt
+              }
+            : p
+        ));
+        toast.success('Payment confirmed!');
+        fetchPayments();
+      } else if (paymentData?.status === 'FAILED') {
+        setPayments(prev => prev.map(p =>
+          p.id === payment.id ? { ...p, status: 'FAILED' as const } : p
+        ));
+        toast.error('Payment has failed. Please try again.');
+        fetchPayments();
+      } else {
+        toast.info(`Payment status: ${paymentData?.status || 'Unknown'}`);
+      }
+    } catch (error) {
+      console.error('Check status error:', error);
+      toast.error('Failed to check payment status');
+    }
+  };
+
+  // ── UI helpers ───────────────────────────────────────────────────────────────
   const getStatusBadge = (status: PaymentStatus) => {
     const styles: Record<PaymentStatus, string> = {
       PENDING: 'bg-amber-500/10 text-amber-400 border-amber-500/30',
@@ -173,7 +329,9 @@ const Payments = () => {
     return formatDateIST(dateString) || 'N/A';
   };
 
-  const pendingPayments = payments.filter(p => p.status === 'PENDING' || p.status === 'PROCESSING');
+  const pendingPayments = payments.filter(
+    p => p.status === 'PENDING' || p.status === 'PROCESSING' || p.status === 'FAILED'
+  );
   const completedPayments = payments.filter(p => p.status === 'COMPLETED');
   const totalPending = pendingPayments.reduce((sum, p) => sum + p.amount, 0);
   const totalPaid = completedPayments.reduce((sum, p) => sum + p.amount, 0);
@@ -263,10 +421,11 @@ const Payments = () => {
           <h2 className="text-lg font-semibold text-white">Pending Payments</h2>
           <div className="grid gap-4">
             {pendingPayments.map((payment) => (
-              <PaymentCard 
-                key={payment.id} 
-                payment={payment} 
+              <PaymentCard
+                key={payment.id}
+                payment={payment}
                 onPay={() => handlePayNow(payment)}
+                onCheckStatus={() => handleCheckStatus(payment)}
                 isProcessing={processingPayment === payment.id}
               />
             ))}
@@ -301,15 +460,20 @@ const Payments = () => {
     </div>
   );
 
-  function PaymentCard({ 
-    payment, 
-    onPay, 
-    isProcessing 
-  }: { 
-    payment: Payment; 
+  function PaymentCard({
+    payment,
+    onPay,
+    onCheckStatus,
+    isProcessing
+  }: {
+    payment: Payment;
     onPay?: () => void;
+    onCheckStatus?: () => void;
     isProcessing?: boolean;
   }) {
+    const canPay = payment.status === 'PENDING' || payment.status === 'FAILED';
+    const canCheckStatus = (payment.status === 'PROCESSING' || payment.status === 'PENDING') && !!payment.razorpayOrderId;
+
     return (
       <Card className="bg-slate-900 border-slate-800">
         <CardContent className="p-6">
@@ -333,20 +497,37 @@ const Payments = () => {
               </div>
             </div>
 
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-3 flex-wrap">
               <div className="text-right">
                 <p className="text-sm text-slate-400">Amount</p>
                 <p className="text-2xl font-bold text-white">₹{payment.amount}</p>
               </div>
-              
-              {onPay && (
+
+              {onPay && canPay && (
                 <Button
                   onClick={onPay}
                   disabled={isProcessing}
                   className="bg-emerald-500 hover:bg-emerald-600"
                 >
-                  {isProcessing ? 'Processing...' : 'Pay Now'}
-                  {!isProcessing && <ArrowRight className="w-4 h-4 ml-2" />}
+                  {isProcessing ? (
+                    <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Processing...</>
+                  ) : (
+                    <>Pay Now<ArrowRight className="w-4 h-4 ml-2" /></>
+                  )}
+                </Button>
+              )}
+
+              {/* Check Status button — for PROCESSING payments where the modal closed
+                  but the payment may have succeeded on Razorpay's end */}
+              {onCheckStatus && canCheckStatus && (
+                <Button
+                  onClick={onCheckStatus}
+                  disabled={isProcessing}
+                  variant="outline"
+                  className="border-blue-500/30 text-blue-400 hover:bg-blue-500/10"
+                >
+                  <RefreshCw className="w-4 h-4 mr-2" />
+                  Check Status
                 </Button>
               )}
             </div>

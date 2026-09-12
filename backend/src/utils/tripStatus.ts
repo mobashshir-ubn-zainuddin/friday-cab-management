@@ -183,16 +183,59 @@ export function getTripStatusStyle(status: EffectiveTripStatus): string {
  * - CANCELLED trips are never auto-updated (explicit admin action)
  * - Only updates status if it actually changes
  * - Does NOT auto-open payment window - that requires admin action with total cost
- * - Returns count of updated trips
+ * - Returns object with updated count and candidate count
+ * 
+ * Optimization: Only queries trips whose status could actually change at the current time.
+ * Trip status changes only at specific time boundaries:
+ * - bookingStartTime: UPCOMING -> BOOKING_OPEN
+ * - bookingEndTime: BOOKING_OPEN -> BOOKING_CLOSED (or CAB_ASSIGNED)
+ * - departureTime: BOOKING_CLOSED/CAB_ASSIGNED -> IN_PROGRESS
+ * - returnTime: IN_PROGRESS -> COMPLETED
+ * So we only fetch trips where any of these timestamps are within a small window of the current time.
+ * 
+ * Further optimization: First does a cheap count check. If no candidate trips exist,
+ * skips the expensive findMany query entirely.
  */
-export async function syncTripStatuses(prisma: any): Promise<number> {
+export async function syncTripStatuses(prisma: any): Promise<{ updated: number; candidates: number }> {
   const now = new Date();
-  let updatedCount = 0;
+  const nowTime = now.getTime();
+  
+  // Window: check trips whose status boundaries are within ±5 minutes of now
+  // This covers all possible status transitions that could happen "now"
+  const WINDOW_MS = 5 * 60 * 1000; // 5 minutes
+  const windowStart = new Date(nowTime - WINDOW_MS);
+  const windowEnd = new Date(nowTime + WINDOW_MS);
 
-  // Fetch all non-cancelled trips with their cabs for effective status calculation
+  // First, do a cheap count to check if any candidate trips exist
+  const candidateCount = await prisma.trip.count({
+    where: {
+      status: { not: 'CANCELLED' },
+      OR: [
+        { bookingStartTime: { gte: windowStart, lte: windowEnd } },
+        { bookingEndTime: { gte: windowStart, lte: windowEnd } },
+        { departureTime: { gte: windowStart, lte: windowEnd } },
+        { returnTime: { gte: windowStart, lte: windowEnd } }
+      ]
+    }
+  });
+
+  // If no trips have status boundaries near current time, skip the expensive query
+  if (candidateCount === 0) {
+    return { updated: 0, candidates: 0 };
+  }
+
+  // Fetch only non-cancelled trips where at least one status boundary timestamp
+  // falls within the current time window. These are the only trips whose
+  // effective status could differ from their persisted status at this moment.
   const trips = await prisma.trip.findMany({
     where: {
-      status: { not: 'CANCELLED' }
+      status: { not: 'CANCELLED' },
+      OR: [
+        { bookingStartTime: { gte: windowStart, lte: windowEnd } },
+        { bookingEndTime: { gte: windowStart, lte: windowEnd } },
+        { departureTime: { gte: windowStart, lte: windowEnd } },
+        { returnTime: { gte: windowStart, lte: windowEnd } }
+      ]
     },
     include: {
       cabs: {
@@ -200,6 +243,8 @@ export async function syncTripStatuses(prisma: any): Promise<number> {
       }
     }
   });
+
+  let updatedCount = 0;
 
   for (const trip of trips) {
     const effectiveStatus = getEffectiveTripStatus(trip, now);
@@ -215,10 +260,10 @@ export async function syncTripStatuses(prisma: any): Promise<number> {
   }
 
   if (updatedCount > 0) {
-    console.log(`[syncTripStatuses] Updated ${updatedCount} trip statuses at ${now.toISOString()}`);
+    console.log(`[syncTripStatuses] Updated ${updatedCount} trip statuses at ${now.toISOString()} (queried ${trips.length} candidates)`);
   }
 
-  return updatedCount;
+  return { updated: updatedCount, candidates: candidateCount };
 }
 
 /**

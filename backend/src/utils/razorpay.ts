@@ -80,6 +80,28 @@ export const fetchPayment = async (paymentId: string) => {
   }
 };
 
+// Fetch order details (including status: paid/attempted/created)
+export const fetchOrder = async (orderId: string) => {
+  try {
+    const order = await razorpay.orders.fetch(orderId);
+    return order;
+  } catch (error) {
+    console.error('Error fetching Razorpay order:', error);
+    throw error;
+  }
+};
+
+// Fetch payments for a specific order
+export const fetchOrderPayments = async (orderId: string) => {
+  try {
+    const payments = await (razorpay.orders as any).fetchPayments(orderId);
+    return payments;
+  } catch (error) {
+    console.error('Error fetching order payments:', error);
+    throw error;
+  }
+};
+
 // Refund payment
 export const refundPayment = async (paymentId: string, amount?: number) => {
   try {

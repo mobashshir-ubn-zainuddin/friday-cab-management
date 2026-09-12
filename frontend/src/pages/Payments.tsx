@@ -91,6 +91,9 @@ const Payments = () => {
           }
         },
         handler: async (response: any) => {
+          // Stop polling when payment handler is called
+          stopPolling();
+          
           try {
             // Verify payment
             await paymentApi.verify({
@@ -109,6 +112,8 @@ const Payments = () => {
           } catch (error) {
             console.error('Payment verification failed:', error);
             toast.error('Payment verification failed. Please contact support.');
+            // Refresh to get actual status from server
+            fetchPayments();
           }
         },
         prefill: {
@@ -122,11 +127,24 @@ const Payments = () => {
         modal: {
           ondismiss: async () => {
             setProcessingPayment(null);
-            // Reset payment status if user cancelled checkout
+            
+            // Check payment status before deciding to reset
+            // If payment was completed externally, don't reset
             try {
-              await paymentApi.reset(payment.tripId);
-              // Refresh payments to get updated status
-              fetchPayments();
+              const statusData = await paymentApi.checkStatus(payment.tripId);
+              const currentStatus = (statusData as any).data?.status;
+              
+              if (currentStatus === 'PROCESSING' || currentStatus === 'PENDING') {
+                // Only reset if payment is still pending/processing (not completed)
+                await paymentApi.reset(payment.tripId);
+                // Refresh payments to get updated status
+                fetchPayments();
+              } else if (currentStatus === 'COMPLETED') {
+                // Payment was completed externally (e.g., via QR scan on phone)
+                // Refresh to show completed status
+                fetchPayments();
+                toast.success('Payment detected and updated!');
+              }
             } catch (error) {
               console.error('Failed to reset payment:', error);
             }
@@ -136,11 +154,123 @@ const Payments = () => {
 
       const razorpay = new (window as any).Razorpay(options);
       razorpay.open();
+      // NOTE: razorpay.open() is non-blocking. The modal is now open.
+      // DO NOT call setProcessingPayment(null) here — the handler or ondismiss
+      // callbacks will handle cleanup when the modal closes.
     } catch (error: any) {
+      // Only reset processing state on error (modal never opened)
       const message = error.response?.data?.error || 'Failed to initiate payment';
       toast.error(message);
+      stopPolling();
     } finally {
       setProcessingPayment(null);
+    }
+  };
+
+  // Polling mechanism
+  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const pollingPaymentIdRef = useRef<string | null>(null);
+
+  const startPolling = useCallback((tripId: string, razorpayOrderId: string) => {
+    // Clear any existing polling
+    stopPolling();
+    
+    pollingPaymentIdRef.current = tripId;
+    
+    // Poll every 3 seconds for up to 5 minutes (100 attempts)
+    let attempts = 0;
+    const maxAttempts = 100;
+    
+    const poll = async () => {
+      if (attempts >= maxAttempts || pollingPaymentIdRef.current !== tripId) {
+        stopPolling();
+        return;
+      }
+      
+      attempts++;
+      
+      try {
+        const statusData = await paymentApi.checkStatus(tripId);
+        const paymentData = (statusData as any).data;
+        
+        if (paymentData?.status === 'COMPLETED') {
+          // Payment completed! Update UI and stop polling
+          stopPolling();
+          setPayments(prev => prev.map(p => 
+            p.tripId === tripId 
+              ? { ...p, status: 'COMPLETED' as const, razorpayPaymentId: paymentData.razorpayPaymentId, paidAt: paymentData.paidAt }
+              : p
+          ));
+          toast.success('Payment successful!');
+          fetchPayments(); // Refresh to get latest data
+          return;
+        } else if (paymentData?.status === 'FAILED') {
+          // Payment failed
+          stopPolling();
+          setPayments(prev => prev.map(p => 
+            p.tripId === tripId 
+              ? { ...p, status: 'FAILED' as const }
+              : p
+          ));
+          toast.error('Payment failed. Please try again.');
+          fetchPayments();
+          return;
+        }
+        // If still PROCESSING or PENDING, continue polling
+      } catch (error) {
+        console.error('Polling error:', error);
+        // Continue polling on error
+      }
+    };
+    
+    // Initial poll after 2 seconds
+    setTimeout(poll, 2000);
+    
+    // Then poll every 3 seconds
+    pollingIntervalRef.current = setInterval(poll, 3000);
+  }, []);
+
+  const stopPolling = useCallback(() => {
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current);
+      pollingIntervalRef.current = null;
+    }
+    pollingPaymentIdRef.current = null;
+  }, []);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => stopPolling();
+  }, [stopPolling]);
+
+  const handleCheckStatus = async (payment: Payment) => {
+    try {
+      const statusData = await paymentApi.checkStatus(payment.tripId);
+      const paymentData = (statusData as any).data;
+      
+      if (paymentData?.status === 'COMPLETED') {
+        setPayments(prev => prev.map(p => 
+          p.id === payment.id 
+            ? { ...p, status: 'COMPLETED' as const, razorpayPaymentId: paymentData.razorpayPaymentId, paidAt: paymentData.paidAt }
+            : p
+        ));
+        toast.success('Payment detected and updated!');
+        fetchPayments();
+      } else if (paymentData?.status === 'FAILED') {
+        setPayments(prev => prev.map(p => 
+          p.id === payment.id 
+            ? { ...p, status: 'FAILED' as const }
+            : p
+        ));
+        toast.error('Payment failed. Please try again.');
+        fetchPayments();
+      } else {
+        toast.info(`Payment status: ${paymentData?.status || 'Unknown'}`);
+        fetchPayments();
+      }
+    } catch (error) {
+      console.error('Failed to check payment status:', error);
+      toast.error('Failed to check payment status');
     }
   };
 

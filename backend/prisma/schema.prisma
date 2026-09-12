@@ -53,6 +53,7 @@ model Trip {
   maxBookings          Int        @default(100)
   currentBookings      Int        @default(0)
   paymentWindowOpen    Boolean    @default(false)
+  paymentAssigned      Boolean    @default(false)
   createdAt            DateTime   @default(now())
   updatedAt            DateTime   @updatedAt
   createdBy            String
@@ -64,8 +65,14 @@ model Trip {
   @@index([status])
   @@index([status, date])
   @@index([departureTime])
+  @@index([bookingStartTime])
+  @@index([bookingEndTime])
+  @@index([returnTime])
   @@index([bookingStartTime, bookingEndTime])
   @@index([createdBy])
+  @@index([paymentAssigned])
+  // Composite index for background job time-window queries
+  @@index([status, bookingStartTime, bookingEndTime, departureTime, returnTime])
 }
 
 model Booking {

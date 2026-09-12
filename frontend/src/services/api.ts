@@ -269,7 +269,8 @@ export const adminApi = {
   assignCab: (data: { cabId: string; bookingId: string }) => apiClient.post('/admin/assign-cab', data, { idempotencyKey: generateIdempotencyKey(`assign-cab-${data.cabId}-${data.bookingId}`) }),
   removeAssignment: (id: string) => apiClient.delete(`/admin/assignments/${id}`, { idempotencyKey: generateIdempotencyKey(`remove-assignment-${id}`) }),
   getPendingPayments: () => apiClient.get('/admin/payments/pending-summary'),
-  getTripBookingsForPayment: (tripId: string) => apiClient.get(`/admin/trips/${tripId}/bookings-for-payment`)
+  getTripBookingsForPayment: (tripId: string) => apiClient.get(`/admin/trips/${tripId}/bookings-for-payment`),
+  getTripsForPaymentControl: () => apiClient.get('/admin/trips/payment-control')
 };
 
 // Analytics API

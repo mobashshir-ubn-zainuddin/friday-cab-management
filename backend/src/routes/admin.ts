@@ -653,4 +653,115 @@ router.get('/trips/:tripId/bookings-for-payment', authenticate, authorizeAdmin, 
   }
 });
 
+// Get trips for payment control (admin)
+// Returns only trips that need payment management:
+// - NOT ASSIGNED: payment not yet assigned
+// - PAYMENT PENDING: payment assigned but some payments pending
+// Excludes: PAYMENT COMPLETED (all payments completed)
+router.get('/trips/payment-control', authenticate, authorizeAdmin, async (req: AuthenticatedRequest, res) => {
+  try {
+    // Fetch all trips that have bookings and are not cancelled
+    // We need trips with their bookings and payments to determine payment status
+    const trips = await prisma.trip.findMany({
+      where: {
+        status: { not: 'CANCELLED' },
+        bookings: {
+          some: {
+            status: { in: ['CONFIRMED', 'ATTENDED'] }
+          }
+        }
+      },
+      include: {
+        bookings: {
+          where: {
+            status: { in: ['CONFIRMED', 'ATTENDED'] }
+          },
+          include: {
+            payment: {
+              select: {
+                id: true,
+                amount: true,
+                status: true,
+                razorpayOrderId: true,
+                razorpayPaymentId: true,
+                paidAt: true
+              }
+            }
+          }
+        }
+      },
+      orderBy: { date: 'desc' }
+    });
+
+    // Determine payment status for each trip
+    const tripsWithPaymentStatus = trips.map(trip => {
+      const eligibleBookings = trip.bookings;
+      const totalAttendees = eligibleBookings.length;
+      
+      if (totalAttendees === 0) {
+        return null; // No eligible bookings
+      }
+
+      const payments = eligibleBookings.map(b => b.payment).filter(Boolean);
+      const paidCount = payments.filter(p => p?.status === 'COMPLETED').length;
+      const pendingCount = payments.filter(p => p?.status === 'PENDING' || p?.status === 'PROCESSING').length;
+      const failedCount = payments.filter(p => p?.status === 'FAILED').length;
+      const noPaymentCount = eligibleBookings.filter(b => !b.payment).length;
+
+      let paymentStatus: 'NOT_ASSIGNED' | 'PAYMENT_PENDING' | 'PAYMENT_COMPLETED';
+
+      if (!trip.paymentAssigned) {
+        paymentStatus = 'NOT_ASSIGNED';
+      } else if (paidCount === totalAttendees) {
+        // All eligible attendees have paid
+        paymentStatus = 'PAYMENT_COMPLETED';
+      } else {
+        // Some payments pending
+        paymentStatus = 'PAYMENT_PENDING';
+      }
+
+      return {
+        id: trip.id,
+        title: trip.title,
+        date: trip.date,
+        departureTime: trip.departureTime,
+        status: trip.status,
+        totalCost: trip.totalCost,
+        costPerPerson: trip.costPerPerson,
+        paymentWindowOpen: trip.paymentWindowOpen,
+        paymentAssigned: trip.paymentAssigned,
+        paymentStatus,
+        currentBookings: trip.currentBookings,
+        summary: {
+          totalAttendees,
+          paidCount,
+          pendingCount,
+          failedCount,
+          noPaymentCount
+        }
+      };
+    }).filter(Boolean);
+
+    // Filter to only include trips needing payment management
+    // Include: NOT_ASSIGNED, PAYMENT_PENDING
+    // Exclude: PAYMENT_COMPLETED
+    const filteredTrips = tripsWithPaymentStatus.filter(
+      t => t && (t.paymentStatus === 'NOT_ASSIGNED' || t.paymentStatus === 'PAYMENT_PENDING')
+    );
+
+    res.json({
+      success: true,
+      data: {
+        trips: filteredTrips
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching trips for payment control:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch trips for payment control'
+    });
+  }
+});
+
 export default router;

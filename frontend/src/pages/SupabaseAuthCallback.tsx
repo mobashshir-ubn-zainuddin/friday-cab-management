@@ -15,6 +15,14 @@ const SupabaseAuthCallback = () => {
       try {
         setLoading(true);
 
+        // Sign out any locally-stored session BEFORE processing the magic link.
+        // Without this, if user A was previously logged in on this browser,
+        // getSession() below would return A's cached session even after the
+        // code exchange succeeds for user B — causing the wrong-user login bug.
+        // scope:'local' clears localStorage without a network round-trip, so it
+        // won't interfere with the upcoming code exchange.
+        await supabase.auth.signOut({ scope: 'local' });
+
         const callbackUrl = window.location.href;
         const hasCode = callbackUrl.includes('code=');
 

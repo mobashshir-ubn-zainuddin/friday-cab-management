@@ -11,7 +11,11 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
     autoRefreshToken: true,
     persistSession: true,
-    detectSessionInUrl: true
+    // Disabled so SupabaseAuthCallback handles the code exchange manually.
+    // With this true, Supabase auto-consumes the one-time code before our
+    // component runs, causing the manual exchangeCodeForSession call to fail
+    // and fall back to the previously stored (wrong) session.
+    detectSessionInUrl: false
   }
 });
 

@@ -39,10 +39,28 @@ const Login = () => {
         email,
         options: {
           emailRedirectTo: CALLBACK_URL,
+          // Prevent Supabase from silently creating accounts for unregistered emails.
+          // Only users who went through /register and were approved should be able to log in.
+          shouldCreateUser: false
         }
       });
 
-      if (error) throw error;
+      if (error) {
+        // Supabase returns a generic error when the email isn't registered.
+        // Redirect to register instead of showing a cryptic message.
+        if (
+          error.message?.toLowerCase().includes('not found') ||
+          error.message?.toLowerCase().includes('user not found') ||
+          error.message?.toLowerCase().includes('signup') ||
+          error.status === 422 ||
+          error.status === 400
+        ) {
+          toast.error('No account found for this email. Please register first.');
+          navigate('/register');
+          return;
+        }
+        throw error;
+      }
 
       setMagicLinkSent(true);
       toast.success('Check your email for the sign-in link. Check your spam too.');

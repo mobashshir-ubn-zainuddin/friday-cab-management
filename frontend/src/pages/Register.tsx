@@ -258,7 +258,7 @@ const Register = () => {
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="space-y-2">
-                  <Label htmlFor="name" className="text-slate-300">Full Name</Label>
+                  <Label htmlFor="name" className="text-slate-300">Full Name <span className="text-red-400">*</span></Label>
                   <Input
                     id="name"
                     placeholder="e.g. Mobashshir Zainuddin"
@@ -266,10 +266,11 @@ const Register = () => {
                     value={name}
                     onChange={(e) => setName(e.target.value)}
                     disabled={registerLoading}
+                    required
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="email" className="text-slate-300">Institute Email</Label>
+                  <Label htmlFor="email" className="text-slate-300">Institute Email <span className="text-red-400">*</span></Label>
                   <div className="flex">
                     <Input
                       id="email"
@@ -278,6 +279,7 @@ const Register = () => {
                       value={emailPrefix}
                       onChange={(e) => setEmailPrefix(e.target.value)}
                       disabled={registerLoading}
+                      required
                     />
                     <div className="bg-slate-800 border border-l-0 border-slate-700 text-slate-400 px-3 flex items-center rounded-r-md text-sm font-medium whitespace-nowrap">
                       @kgpian.iitkgp.ac.in
@@ -285,7 +287,7 @@ const Register = () => {
                   </div>
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="phone" className="text-slate-300">Phone Number</Label>
+                  <Label htmlFor="phone" className="text-slate-300">Phone Number <span className="text-red-400">*</span></Label>
                   <Input
                     id="phone"
                     placeholder="e.g. 7481843499"
@@ -294,10 +296,11 @@ const Register = () => {
                     onChange={(e) => setPhone(e.target.value)}
                     disabled={registerLoading}
                     inputMode="tel"
+                    required
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="rollNumber" className="text-slate-300">Roll Number</Label>
+                  <Label htmlFor="rollNumber" className="text-slate-300">Roll Number <span className="text-red-400">*</span></Label>
                   <Input
                     id="rollNumber"
                     placeholder="e.g. 23M3PE01"
@@ -305,10 +308,11 @@ const Register = () => {
                     value={rollNumber}
                     onChange={(e) => setRollNumber(e.target.value)}
                     disabled={registerLoading}
+                    required
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="department" className="text-slate-300">Department</Label>
+                  <Label htmlFor="department" className="text-slate-300">Department <span className="text-red-400">*</span></Label>
                   <Select value={department} onValueChange={setDepartment} disabled={registerLoading}>
                     <SelectTrigger
                       id="department"

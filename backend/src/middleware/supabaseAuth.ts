@@ -84,20 +84,13 @@ export const verifySupabaseUser = async (
         });
 
         if (!dbUser) {
-          // Create new user if not exists
-          const adminEmails = process.env.ADMIN_EMAILS?.split(',').map(e => e.trim().toLowerCase()) || [];
-          const isAdmin = adminEmails.includes(email.toLowerCase());
-
-          dbUser = await prisma.user.create({
-            data: {
-              email,
-              name: user.user_metadata?.full_name || user.user_metadata?.name || '',
-              isAdmin,
-              isBlocked: false,
-              approvalStatus: isAdmin ? 'APPROVED' : 'PENDING',
-              supabaseUserId: user.id
-            }
+          // No account in our DB — reject. Users must register first.
+          res.status(403).json({
+            success: false,
+            error: 'ACCOUNT_NOT_FOUND',
+            message: 'No account found for this email. Please register at /register.'
           });
+          return;
         } else if (!dbUser.supabaseUserId) {
           // Update existing user with Supabase ID if missing
           dbUser = await prisma.user.update({

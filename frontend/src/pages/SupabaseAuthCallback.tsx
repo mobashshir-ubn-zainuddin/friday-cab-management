@@ -15,35 +15,64 @@ const SupabaseAuthCallback = () => {
       try {
         setLoading(true);
 
-        // Sign out any locally-stored session BEFORE processing the magic link.
-        // Without this, if user A was previously logged in on this browser,
-        // getSession() below would return A's cached session even after the
-        // code exchange succeeds for user B — causing the wrong-user login bug.
-        // scope:'local' clears localStorage without a network round-trip, so it
-        // won't interfere with the upcoming code exchange.
+        // Clear any existing session to prevent cross-user contamination.
+        // scope:'local' clears localStorage without a network round-trip.
         await supabase.auth.signOut({ scope: 'local' });
 
-        const callbackUrl = window.location.href;
-        const hasCode = callbackUrl.includes('code=');
+        const url = new URL(window.location.href);
+        const code = url.searchParams.get('code');
+        const tokenHash = url.searchParams.get('token_hash');
+        const type = url.searchParams.get('type');
+        // Supabase error redirects
+        const errorCode = url.searchParams.get('error_code');
+        const errorDesc = url.searchParams.get('error_description');
 
-        if (hasCode) {
-          const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(callbackUrl);
+        if (errorCode || errorDesc) {
+          throw new Error(errorDesc?.replace(/\+/g, ' ') || errorCode || 'Authentication error');
+        }
 
-          if (exchangeError) throw exchangeError;
+        if (tokenHash && type) {
+          // Token-hash flow — works in any browser/webview, no code_verifier needed.
+          // This is the mobile-safe path used when the Supabase email template
+          // sends ?token_hash=...&type=magiclink instead of the PKCE ?code=...
+          const { error } = await supabase.auth.verifyOtp({
+            token_hash: tokenHash,
+            type: type as any
+          });
+          if (error) throw error;
+        } else if (code) {
+          // PKCE flow — requires the same browser that initiated the login
+          // (code_verifier is stored there). Fails in Gmail/email-app webviews.
+          const { error } = await supabase.auth.exchangeCodeForSession(window.location.href);
+          if (error) {
+            if (
+              error.message?.includes('code verifier') ||
+              error.message?.includes('code_verifier') ||
+              error.message?.includes('non-empty')
+            ) {
+              throw new Error(
+                'Please open this link in the same browser you used to request the sign-in link, ' +
+                'or go to kuchlachati.iitkgpcabs.in/login and request a new link.'
+              );
+            }
+            throw error;
+          }
+        } else {
+          throw new Error(
+            'No sign-in token found. Please request a new sign-in link from the login page.'
+          );
         }
 
         const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-
         if (sessionError) throw sessionError;
 
         if (!session) {
-          setError('No active session found.');
+          setError('No active session found. Please request a new sign-in link.');
           setLoading(false);
           return;
         }
 
         const user = session.user;
-
         if (user && !user.email?.endsWith('@kgpian.iitkgp.ac.in')) {
           await supabase.auth.signOut();
           setError('Only @kgpian.iitkgp.ac.in emails are allowed.');

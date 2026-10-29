@@ -48,19 +48,36 @@ if (process.env.NODE_ENV === 'development') {
 
 if (process.env.NODE_ENV !== 'production') globalThis.prisma = prisma;
 
-// Request-scoped user cache
-const requestUserCache = new Map<string, User>();
+// Process-level TTL cache — survives across requests so the same token
+// doesn't hit Supabase Auth on every API call (the dominant latency source).
+// 5-minute TTL: short enough to pick up logouts/blocks, long enough to cut
+// per-request Supabase round-trips to near-zero after the first call.
+const USER_CACHE_TTL_MS = 5 * 60 * 1000;
+
+interface CacheEntry {
+  user: User;
+  expiresAt: number;
+}
+
+const userCache = new Map<string, CacheEntry>();
 
 export const getCachedUser = (key: string): User | undefined => {
-  return requestUserCache.get(key);
+  const entry = userCache.get(key);
+  if (!entry) return undefined;
+  if (Date.now() > entry.expiresAt) {
+    userCache.delete(key);
+    return undefined;
+  }
+  return entry.user;
 };
 
 export const setCachedUser = (key: string, user: User): void => {
-  requestUserCache.set(key, user);
+  userCache.set(key, { user, expiresAt: Date.now() + USER_CACHE_TTL_MS });
 };
 
+// Kept for API compatibility; individual entries now expire via TTL.
 export const clearRequestUserCache = (): void => {
-  requestUserCache.clear();
+  // no-op: cache is now process-level, not request-scoped
 };
 
 export default prisma;

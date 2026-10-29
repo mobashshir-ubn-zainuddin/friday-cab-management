@@ -102,6 +102,14 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         return;
       }
 
+      if (errorMsg === 'ACCOUNT_NOT_FOUND') {
+        setUser(null);
+        localStorage.removeItem('user');
+        alert('No account found for this email. Please register at /register first.');
+        await logout();
+        return;
+      }
+
       // If sync fails for other reasons, try fetching current user
       try {
         const userData = await authApi.getCurrentUser();
@@ -112,12 +120,16 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       } catch (err: any) {
         console.error('Error fetching current user:', err);
         const currentErrorMsg = err?.message || '';
-        if (currentErrorMsg === 'ACCOUNT_PENDING_APPROVAL' || currentErrorMsg === 'ACCOUNT_REJECTED') {
+        if (currentErrorMsg === 'ACCOUNT_PENDING_APPROVAL' || currentErrorMsg === 'ACCOUNT_REJECTED' || currentErrorMsg === 'ACCOUNT_NOT_FOUND') {
           setUser(null);
           localStorage.removeItem('user');
-          alert(currentErrorMsg === 'ACCOUNT_PENDING_APPROVAL'
-            ? 'Your account is awaiting admin verification.'
-            : 'Your registration was not approved.');
+          alert(
+            currentErrorMsg === 'ACCOUNT_PENDING_APPROVAL'
+              ? 'Your account is awaiting admin verification.'
+              : currentErrorMsg === 'ACCOUNT_NOT_FOUND'
+              ? 'No account found for this email. Please register first.'
+              : 'Your registration was not approved.'
+          );
           await logout();
         }
       }

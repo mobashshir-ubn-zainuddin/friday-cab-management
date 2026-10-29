@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
 import { Car, AlertCircle, Loader2 } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -7,23 +8,18 @@ import { Button } from '@/components/ui/button';
 
 const SupabaseAuthCallback = () => {
   const navigate = useNavigate();
-  const [error, setError] = useState<string>('');
-  const [loading, setLoading] = useState(true);
+  const { isAuthenticated, isLoading } = useAuth();
+  const [error, setError] = useState('');
+  const [processed, setProcessed] = useState(false);
 
+  // Step 1: Process the token from the URL (runs once on mount)
   useEffect(() => {
-    const handleAuthCallback = async () => {
+    const processToken = async () => {
       try {
-        setLoading(true);
-
-        // Clear any existing session to prevent cross-user contamination.
-        // scope:'local' clears localStorage without a network round-trip.
-        await supabase.auth.signOut({ scope: 'local' });
-
         const url = new URL(window.location.href);
-        const code = url.searchParams.get('code');
         const tokenHash = url.searchParams.get('token_hash');
         const type = url.searchParams.get('type');
-        // Supabase error redirects
+        const code = url.searchParams.get('code');
         const errorCode = url.searchParams.get('error_code');
         const errorDesc = url.searchParams.get('error_description');
 
@@ -32,17 +28,15 @@ const SupabaseAuthCallback = () => {
         }
 
         if (tokenHash && type) {
-          // Token-hash flow — works in any browser/webview, no code_verifier needed.
-          // This is the mobile-safe path used when the Supabase email template
-          // sends ?token_hash=...&type=magiclink instead of the PKCE ?code=...
+          // Token-hash flow: works in any browser/webview, no PKCE code_verifier needed.
+          // Used when Supabase email template sends ?token_hash=...&type=magiclink
           const { error } = await supabase.auth.verifyOtp({
             token_hash: tokenHash,
             type: type as any
           });
           if (error) throw error;
         } else if (code) {
-          // PKCE flow — requires the same browser that initiated the login
-          // (code_verifier is stored there). Fails in Gmail/email-app webviews.
+          // PKCE flow: requires the same browser that initiated login.
           const { error } = await supabase.auth.exchangeCodeForSession(window.location.href);
           if (error) {
             if (
@@ -52,54 +46,48 @@ const SupabaseAuthCallback = () => {
             ) {
               throw new Error(
                 'Please open this link in the same browser you used to request the sign-in link, ' +
-                'or go to kuchlachati.iitkgpcabs.in/login and request a new link.'
+                'or go to the login page and request a new link.'
               );
             }
             throw error;
           }
         } else {
-          throw new Error(
-            'No sign-in token found. Please request a new sign-in link from the login page.'
-          );
+          throw new Error('No sign-in token found. Please request a new sign-in link from the login page.');
         }
-
-        const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-        if (sessionError) throw sessionError;
-
-        if (!session) {
-          setError('No active session found. Please request a new sign-in link.');
-          setLoading(false);
-          return;
-        }
-
-        const user = session.user;
-        if (user && !user.email?.endsWith('@kgpian.iitkgp.ac.in')) {
-          await supabase.auth.signOut();
-          setError('Only @kgpian.iitkgp.ac.in emails are allowed.');
-          setLoading(false);
-          return;
-        }
-
-        // AuthContext handles syncing via onAuthStateChange
-        navigate('/dashboard', { replace: true });
       } catch (err: any) {
         console.error('Auth callback error:', err);
         setError(err.message || 'Authentication failed.');
-        setLoading(false);
+      } finally {
+        setProcessed(true);
       }
     };
 
-    handleAuthCallback();
-  }, [navigate]);
+    processToken();
+  }, []);
 
-  const handleRetry = () => {
-    navigate('/login');
-  };
+  // Step 2: Once the token is processed AND AuthContext has finished syncing, navigate.
+  // We wait for isLoading=false so we don't navigate before the backend user sync completes.
+  useEffect(() => {
+    if (!processed || error) return;
+    if (isLoading) return; // AuthContext still syncing with backend — wait
+
+    if (isAuthenticated) {
+      navigate('/dashboard', { replace: true });
+    } else {
+      // Token was valid but backend sync failed (ACCOUNT_NOT_FOUND, PENDING, REJECTED, etc.)
+      // AuthContext already showed the alert and called logout() — just go to login.
+      navigate('/login', { replace: true });
+    }
+  }, [processed, error, isLoading, isAuthenticated, navigate]);
+
+  const handleRetry = () => navigate('/login');
+
+  const showLoading = !error && (!processed || isLoading);
 
   return (
     <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4">
       <div className="text-center space-y-6 max-w-md">
-        {loading && !error ? (
+        {showLoading ? (
           <>
             <div className="w-16 h-16 bg-emerald-500 rounded-2xl flex items-center justify-center mx-auto animate-pulse">
               <Car className="w-8 h-8 text-white" />

@@ -17,56 +17,66 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-// Sync cache duration: 10 minutes (increased to reduce unnecessary syncs)
-const SYNC_CACHE_DURATION = 10 * 60 * 1000;
+const SYNC_CACHE_DURATION = 10 * 60 * 1000; // 10 minutes
 
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const navigate = useNavigate();
 
-  // Refs for deduplication
   const lastSyncedUserId = useRef<string | null>(null);
   const lastSyncTime = useRef<number>(0);
   const syncInProgress = useRef<boolean>(false);
-  const currentSessionRef = useRef<{ user: any; expiresAt: number } | null>(null);
   const hasInitialized = useRef<boolean>(false);
 
-  // Check if cached user data is still valid
+  // Use a ref so checkAndSyncUser can call the latest logout without stale closure
+  const logoutRef = useRef<() => Promise<void>>(async () => {});
+
+  const logout = useCallback(async () => {
+    await supabase.auth.signOut();
+    setUser(null);
+    lastSyncedUserId.current = null;
+    lastSyncTime.current = 0;
+    syncInProgress.current = false;
+    hasInitialized.current = false;
+    navigate('/login');
+  }, [navigate]);
+
+  // Keep ref in sync with the latest logout
+  useEffect(() => {
+    logoutRef.current = logout;
+  }, [logout]);
+
   const isCacheValid = useCallback((userId: string): boolean => {
-    const now = Date.now();
     return (
       lastSyncedUserId.current === userId &&
-      now - lastSyncTime.current < SYNC_CACHE_DURATION &&
+      Date.now() - lastSyncTime.current < SYNC_CACHE_DURATION &&
       user !== null
     );
   }, [user]);
 
   const checkAndSyncUser = useCallback(async (supabaseUser: any) => {
     const email = supabaseUser.email;
+
     if (!email?.endsWith('@kgpian.iitkgp.ac.in')) {
-      console.error('Unauthorized domain');
-      await logout();
+      await logoutRef.current();
       alert('Only @kgpian.iitkgp.ac.in emails are allowed');
       return;
     }
 
     const userId = supabaseUser.id;
 
-    // Deduplication: skip if same user synced recently
     if (isCacheValid(userId)) {
-      console.log('[Auth] Skipping sync - cached user still valid');
+      console.log('[Auth] Skipping sync - cache valid');
       return;
     }
 
-    // Prevent concurrent sync calls for same user
+    // Prevent concurrent syncs for the same user
     if (syncInProgress.current && lastSyncedUserId.current === userId) {
-      console.log('[Auth] Sync already in progress for this user, waiting...');
-      // Wait for existing sync to complete (max 10 seconds)
-      let waitTime = 0;
-      while (syncInProgress.current && waitTime < 10000) {
-        await new Promise(resolve => setTimeout(resolve, 100));
-        waitTime += 100;
+      let waited = 0;
+      while (syncInProgress.current && waited < 10000) {
+        await new Promise(r => setTimeout(r, 100));
+        waited += 100;
       }
       return;
     }
@@ -74,57 +84,55 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     syncInProgress.current = true;
 
     try {
-      // Sync user with backend
       const response = await authApi.syncUser();
-      const userData = response.user;
-      setUser(userData);
+      setUser(response.user);
       lastSyncedUserId.current = userId;
       lastSyncTime.current = Date.now();
-      currentSessionRef.current = { user: supabaseUser, expiresAt: Date.now() + SYNC_CACHE_DURATION };
     } catch (error: any) {
-      console.error('Error syncing user:', error);
+      const msg = error?.message || '';
+      console.error('[Auth] Sync error:', msg);
 
-      const errorMsg = error?.message || '';
-      if (errorMsg === 'ACCOUNT_PENDING_APPROVAL') {
+      if (msg === 'ACCOUNT_PENDING_APPROVAL') {
         setUser(null);
         alert('Your account is awaiting admin verification. Please wait for an admin to approve your registration.');
-        await logout();
+        await logoutRef.current();
         return;
       }
-
-      if (errorMsg === 'ACCOUNT_REJECTED') {
+      if (msg === 'ACCOUNT_REJECTED') {
         setUser(null);
         alert('Your registration was not approved. Please contact an administrator.');
-        await logout();
+        await logoutRef.current();
         return;
       }
-
-      if (errorMsg === 'ACCOUNT_NOT_FOUND') {
+      if (msg === 'ACCOUNT_NOT_FOUND') {
         setUser(null);
-        alert('No account found for this email. Please register at /register first.');
-        await logout();
+        alert('No account found for this email. Please register first.');
+        await logoutRef.current();
         return;
       }
 
-      // If sync fails for other reasons, try fetching current user
+      // For other errors (network blip etc.), try getCurrentUser as fallback
       try {
         const userData = await authApi.getCurrentUser();
         setUser(userData as User);
         lastSyncedUserId.current = userId;
         lastSyncTime.current = Date.now();
-      } catch (err: any) {
-        console.error('Error fetching current user:', err);
-        const currentErrorMsg = err?.message || '';
-        if (currentErrorMsg === 'ACCOUNT_PENDING_APPROVAL' || currentErrorMsg === 'ACCOUNT_REJECTED' || currentErrorMsg === 'ACCOUNT_NOT_FOUND') {
-          setUser(null);
+      } catch (fallbackErr: any) {
+        const fallbackMsg = fallbackErr?.message || '';
+        setUser(null);
+        if (
+          fallbackMsg === 'ACCOUNT_PENDING_APPROVAL' ||
+          fallbackMsg === 'ACCOUNT_REJECTED' ||
+          fallbackMsg === 'ACCOUNT_NOT_FOUND'
+        ) {
           alert(
-            currentErrorMsg === 'ACCOUNT_PENDING_APPROVAL'
+            fallbackMsg === 'ACCOUNT_PENDING_APPROVAL'
               ? 'Your account is awaiting admin verification.'
-              : currentErrorMsg === 'ACCOUNT_NOT_FOUND'
+              : fallbackMsg === 'ACCOUNT_NOT_FOUND'
               ? 'No account found for this email. Please register first.'
               : 'Your registration was not approved.'
           );
-          await logout();
+          await logoutRef.current();
         }
       }
     } finally {
@@ -132,88 +140,63 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   }, [isCacheValid]);
 
-  const initAuth = useCallback(async () => {
-    // Prevent double initialization
-    if (hasInitialized.current) {
-      setIsLoading(false);
-      return;
-    }
-    hasInitialized.current = true;
-
-    const { data: { session } } = await supabase.auth.getSession();
-    if (session) {
-      // Store session for token refresh detection
-      currentSessionRef.current = { 
-        user: session.user, 
-        expiresAt: Date.now() + SYNC_CACHE_DURATION 
-      };
-      await checkAndSyncUser(session.user);
-    }
-    setIsLoading(false);
-  }, [checkAndSyncUser]);
-
   useEffect(() => {
-    // Listen for auth changes - ONLY sync on SIGNED_IN, not on token refresh
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      console.log('Auth event:', event);
-      
-      if (session) {
-        // Only sync on SIGNED_IN (initial login)
-        // Skip TOKEN_REFRESHED and USER_UPDATED to avoid repeated syncs
-        // USER_UPDATED will be handled by explicit refreshUser() calls
-        if (event === 'SIGNED_IN') {
-          // Set loading=true immediately so ProtectedRoute shows a spinner
-          // while the async backend sync runs. Without this, there's a race:
-          // the previous SIGNED_OUT set isLoading=false, so by the time
-          // navigate('/dashboard') runs, ProtectedRoute sees user=null,
-          // isLoading=false and redirects back to /login.
-          setIsLoading(true);
-          await checkAndSyncUser(session.user);
-        } else if (event === 'TOKEN_REFRESHED') {
-          // Token silently refreshed - just update stored token, don't resync user
-          console.log('[Auth] Token refreshed, skipping user sync');
-        }
-      } else {
-        // SIGNED_OUT
+      console.log('[Auth] Event:', event);
+
+      if (event === 'SIGNED_IN' && session) {
+        // Set loading immediately so ProtectedRoute waits for the sync to complete
+        setIsLoading(true);
+        await checkAndSyncUser(session.user);
+        setIsLoading(false);
+        return;
+      }
+
+      if (event === 'SIGNED_OUT') {
         setUser(null);
         lastSyncedUserId.current = null;
         lastSyncTime.current = 0;
-        currentSessionRef.current = null;
+        syncInProgress.current = false;
         hasInitialized.current = false;
+        setIsLoading(false);
+        return;
       }
+
+      // TOKEN_REFRESHED, USER_UPDATED — no re-sync needed
       setIsLoading(false);
     });
 
-    // Initial session check
+    // Check for an existing session on mount (e.g. page refresh within same tab)
+    const initAuth = async () => {
+      if (hasInitialized.current) {
+        setIsLoading(false);
+        return;
+      }
+      hasInitialized.current = true;
+
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session) {
+        await checkAndSyncUser(session.user);
+      }
+      setIsLoading(false);
+    };
+
     initAuth();
 
-    return () => {
-      subscription.unsubscribe();
-    };
-  }, [initAuth, checkAndSyncUser]);
+    return () => subscription.unsubscribe();
+  }, [checkAndSyncUser]);
 
-  const logout = async () => {
-    await supabase.auth.signOut();
-    setUser(null);
-    lastSyncedUserId.current = null;
-    lastSyncTime.current = 0;
-    currentSessionRef.current = null;
-    hasInitialized.current = false;
-    navigate('/login');
-  };
-
-  const refreshUser = async () => {
+  const refreshUser = useCallback(async () => {
     try {
       const userData = await authApi.getCurrentUser();
       setUser(userData as User);
-      if (currentSessionRef.current?.user) {
-        lastSyncedUserId.current = currentSessionRef.current.user.id;
+      if (lastSyncedUserId.current) {
         lastSyncTime.current = Date.now();
       }
     } catch (error) {
-      console.error('Error refreshing user:', error);
+      console.error('[Auth] refreshUser error:', error);
     }
-  };
+  }, []);
 
   const value: AuthContextType = {
     user,
@@ -222,14 +205,10 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     isAdmin: user?.isAdmin || false,
     hasPendingPayments: user?.hasPendingPayments || false,
     logout,
-    refreshUser
+    refreshUser,
   };
 
-  return (
-    <AuthContext.Provider value={value}>
-      {children}
-    </AuthContext.Provider>
-  );
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };
 
 export const useAuth = (): AuthContextType => {

@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
 import type { ReactNode } from 'react';
 import type { User } from '@/types';
-import { authApi } from '@/services/api';
+import { authApi, setCurrentToken } from '@/services/api';
 import { supabase } from '@/lib/supabase';
 import { useNavigate } from 'react-router-dom';
 
@@ -32,6 +32,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const logoutRef = useRef<() => Promise<void>>(async () => {});
 
   const logout = useCallback(async () => {
+    setCurrentToken(null);
     await supabase.auth.signOut();
     setUser(null);
     lastSyncedUserId.current = null;
@@ -122,6 +123,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         // Replacing the separate initAuth() call eliminates the race where
         // initAuth's getSession() returned null before verifyOtp completed,
         // causing isLoading=false to land before SIGNED_IN fired.
+        setCurrentToken(session?.access_token ?? null);
         if (session) {
           const gen = ++syncGeneration.current;
           await checkAndSyncUser(session.user, gen);
@@ -131,6 +133,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       }
 
       if (event === 'SIGNED_IN' && session) {
+        // Store token BEFORE any API call so the interceptor can attach it
+        setCurrentToken(session.access_token);
         // Signal loading so ProtectedRoute shows a spinner while we sync
         setIsLoading(true);
         const gen = ++syncGeneration.current;
@@ -139,12 +143,14 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         return;
       }
 
-      if (event === 'TOKEN_REFRESHED') {
-        // Token silently refreshed — user is the same, no re-sync needed
+      if (event === 'TOKEN_REFRESHED' && session) {
+        // Token silently refreshed — update stored token, no re-sync needed
+        setCurrentToken(session.access_token);
         return;
       }
 
       if (event === 'SIGNED_OUT') {
+        setCurrentToken(null);
         setUser(null);
         lastSyncedUserId.current = null;
         syncGeneration.current += 1;

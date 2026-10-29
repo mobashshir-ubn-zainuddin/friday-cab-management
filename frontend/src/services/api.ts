@@ -1,7 +1,15 @@
 import axios, { AxiosError } from 'axios';
 import type { AxiosInstance, AxiosRequestConfig, AxiosResponse, InternalAxiosRequestConfig } from 'axios';
 import type { ApiResponse, ApproveUserResponse, RejectUserResponse, BlockUserResponse, SetAdminResponse, PaginatedUsersResponse } from '@/types';
-import { supabase } from '@/lib/supabase';
+
+// Current Supabase access token, kept in sync by AuthContext's onAuthStateChange.
+// We intentionally DO NOT call supabase.auth.getSession() here because doing so
+// from inside an onAuthStateChange callback (where the API interceptor is invoked
+// during checkAndSyncUser) re-enters Supabase's internal lock and can deadlock.
+let _currentToken: string | null = null;
+export const setCurrentToken = (token: string | null): void => {
+  _currentToken = token;
+};
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
@@ -36,14 +44,13 @@ const api: AxiosInstance = axios.create({
 });
 
 // Request interceptor: attach the current Supabase access token.
-// Previously read from localStorage('token') — but we switched Supabase to
-// sessionStorage and removed all localStorage writes, so that key is always null.
-// Now we read directly from the Supabase client (fast: just reads sessionStorage).
+// Reads from the module-level _currentToken (kept in sync by AuthContext)
+// instead of calling supabase.auth.getSession() to avoid re-entering
+// Supabase's internal lock from within an onAuthStateChange callback.
 api.interceptors.request.use(
-  async (config) => {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (session?.access_token) {
-      config.headers.Authorization = `Bearer ${session.access_token}`;
+  (config) => {
+    if (_currentToken) {
+      config.headers.Authorization = `Bearer ${_currentToken}`;
     }
     return config;
   },
@@ -80,7 +87,7 @@ api.interceptors.response.use(
     }
     return response;
   },
-  async (error: AxiosError<ApiResponse>) => {
+  (error: AxiosError<ApiResponse>) => {
     // Clean up pending request cache on error
     if (error.config) {
       const key = getRequestKey(error.config);
@@ -89,8 +96,9 @@ api.interceptors.response.use(
       }
     }
     if (error.response?.status === 401) {
-      // Token expired or invalid — sign out via Supabase and redirect
-      await supabase.auth.signOut();
+      // Token expired or invalid — clear token and redirect; AuthContext will
+      // handle the SIGNED_OUT event and call supabase.auth.signOut() cleanly.
+      _currentToken = null;
       window.location.href = '/login';
     }
     return Promise.reject(error);

@@ -162,6 +162,12 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         // Skip TOKEN_REFRESHED and USER_UPDATED to avoid repeated syncs
         // USER_UPDATED will be handled by explicit refreshUser() calls
         if (event === 'SIGNED_IN') {
+          // Set loading=true immediately so ProtectedRoute shows a spinner
+          // while the async backend sync runs. Without this, there's a race:
+          // the previous SIGNED_OUT set isLoading=false, so by the time
+          // navigate('/dashboard') runs, ProtectedRoute sees user=null,
+          // isLoading=false and redirects back to /login.
+          setIsLoading(true);
           await checkAndSyncUser(session.user);
         } else if (event === 'TOKEN_REFRESHED') {
           // Token silently refreshed - just update stored token, don't resync user

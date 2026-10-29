@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { prisma } from '../utils/prisma';
+import { prisma, invalidateCacheForEmail } from '../utils/prisma';
 import { AuthenticatedRequest } from '../types';
 import { z } from 'zod';
 
@@ -367,6 +367,9 @@ router.post(
         }
       });
 
+      // Flush cached record so the user's next request gets the APPROVED status
+      invalidateCacheForEmail(target.email);
+
       const approvalDuration = Date.now() - startTime;
       console.log(`[Approve] User ${target.email} approved in ${approvalDuration}ms`);
 
@@ -484,6 +487,9 @@ router.post(
       await prisma.user.delete({
         where: { id }
       });
+
+      // Flush cached record so rejected user can't reuse a cached session
+      invalidateCacheForEmail(target.email);
 
       res.json({
         success: true,

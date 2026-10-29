@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
@@ -8,12 +8,22 @@ import { Button } from '@/components/ui/button';
 
 const SupabaseAuthCallback = () => {
   const navigate = useNavigate();
-  const { isAuthenticated, isLoading } = useAuth();
+  const { user } = useAuth();
   const [error, setError] = useState('');
+  // expectedUserId: the Supabase user ID confirmed by verifyOtp/exchangeCode.
+  // We navigate to /dashboard ONLY once user.supabaseUserId matches this,
+  // ensuring we never forward on a leftover session from a different user.
+  const [expectedUserId, setExpectedUserId] = useState<string | null>(null);
+  // processed: true once verifyOtp (or an error) has completed
   const [processed, setProcessed] = useState(false);
+  // Guard against React StrictMode running the effect twice
+  const processingRef = useRef(false);
 
-  // Step 1: Process the token from the URL (runs once on mount)
+  // Step 1: Verify the token/code from the callback URL exactly once
   useEffect(() => {
+    if (processingRef.current) return;
+    processingRef.current = true;
+
     const processToken = async () => {
       try {
         const url = new URL(window.location.href);
@@ -24,39 +34,65 @@ const SupabaseAuthCallback = () => {
         const errorDesc = url.searchParams.get('error_description');
 
         if (errorCode || errorDesc) {
-          throw new Error(errorDesc?.replace(/\+/g, ' ') || errorCode || 'Authentication error');
+          throw new Error(
+            (errorDesc ?? '').replace(/\+/g, ' ') ||
+            errorCode ||
+            'Authentication error from provider'
+          );
         }
 
         if (tokenHash && type) {
-          // Token-hash flow: works in any browser/webview, no PKCE code_verifier needed.
+          // Token-hash flow: no PKCE verifier needed, works in any webview.
           // Used when Supabase email template sends ?token_hash=...&type=magiclink
-          const { error } = await supabase.auth.verifyOtp({
+          console.log('[Callback] Processing token_hash flow');
+          const { error: otpErr } = await supabase.auth.verifyOtp({
             token_hash: tokenHash,
-            type: type as any
+            type: type as any,
           });
-          if (error) throw error;
+          if (otpErr) throw otpErr;
         } else if (code) {
-          // PKCE flow: requires the same browser that initiated login.
-          const { error } = await supabase.auth.exchangeCodeForSession(window.location.href);
-          if (error) {
+          // PKCE flow: requires same browser that initiated login (code_verifier in sessionStorage).
+          console.log('[Callback] Processing PKCE code flow');
+          const { error: codeErr } = await supabase.auth.exchangeCodeForSession(
+            window.location.href
+          );
+          if (codeErr) {
             if (
-              error.message?.includes('code verifier') ||
-              error.message?.includes('code_verifier') ||
-              error.message?.includes('non-empty')
+              codeErr.message?.includes('code verifier') ||
+              codeErr.message?.includes('code_verifier') ||
+              codeErr.message?.includes('non-empty')
             ) {
               throw new Error(
                 'Please open this link in the same browser you used to request the sign-in link, ' +
                 'or go to the login page and request a new link.'
               );
             }
-            throw error;
+            throw codeErr;
           }
         } else {
-          throw new Error('No sign-in token found. Please request a new sign-in link from the login page.');
+          throw new Error(
+            'No sign-in token found in the link. Please request a new sign-in link from the login page.'
+          );
         }
+
+        // Grab the session Supabase just created so we can verify identity correlation
+        const { data: { session }, error: sessionErr } = await supabase.auth.getSession();
+        if (sessionErr) throw sessionErr;
+        if (!session) throw new Error('Session was not created. Please try again.');
+
+        const uid = session.user.id;
+        const email = session.user.email ?? '';
+
+        if (!email.endsWith('@kgpian.iitkgp.ac.in')) {
+          await supabase.auth.signOut();
+          throw new Error('Only @kgpian.iitkgp.ac.in email addresses are allowed.');
+        }
+
+        console.log('[Callback] Token verified for Supabase user:', uid);
+        setExpectedUserId(uid);
       } catch (err: any) {
-        console.error('Auth callback error:', err);
-        setError(err.message || 'Authentication failed.');
+        console.error('[Callback] Error:', err.message);
+        setError(err.message || 'Authentication failed. Please try again.');
       } finally {
         setProcessed(true);
       }
@@ -65,24 +101,33 @@ const SupabaseAuthCallback = () => {
     processToken();
   }, []);
 
-  // Step 2: Once the token is processed AND AuthContext has finished syncing, navigate.
-  // We wait for isLoading=false so we don't navigate before the backend user sync completes.
+  // Step 2: Once verifyOtp succeeded AND AuthContext has synced the exact user,
+  // navigate. We match on supabaseUserId (not just "any user is set") so that
+  // a previous user's session can never trigger a navigation.
   useEffect(() => {
-    if (!processed || error) return;
-    if (isLoading) return; // AuthContext still syncing with backend — wait
+    if (!processed || error || !expectedUserId) return;
 
-    if (isAuthenticated) {
+    if (user?.supabaseUserId === expectedUserId) {
+      // AuthContext confirmed this exact user is authenticated and approved
+      console.log('[Callback] Identity confirmed, navigating to dashboard');
       navigate('/dashboard', { replace: true });
-    } else {
-      // Token was valid but backend sync failed (ACCOUNT_NOT_FOUND, PENDING, REJECTED, etc.)
-      // AuthContext already showed the alert and called logout() — just go to login.
-      navigate('/login', { replace: true });
     }
-  }, [processed, error, isLoading, isAuthenticated, navigate]);
+    // If user is null, AuthContext is either still syncing (isLoading) or
+    // already called logout() → navigate('/login') for us. Either way, wait.
+  }, [processed, error, expectedUserId, user, navigate]);
 
-  const handleRetry = () => navigate('/login');
+  // Safety timeout: if AuthContext hasn't resolved within 20 seconds,
+  // something went badly wrong — send the user back to login.
+  useEffect(() => {
+    if (!processed || error || !expectedUserId) return;
+    const t = setTimeout(() => {
+      console.warn('[Callback] Timeout waiting for auth sync');
+      navigate('/login', { replace: true });
+    }, 20_000);
+    return () => clearTimeout(t);
+  }, [processed, error, expectedUserId, navigate]);
 
-  const showLoading = !error && (!processed || isLoading);
+  const showLoading = !error && (!processed || !expectedUserId || user?.supabaseUserId !== expectedUserId);
 
   return (
     <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4">
@@ -103,17 +148,16 @@ const SupabaseAuthCallback = () => {
             <div className="w-16 h-16 bg-red-500 rounded-2xl flex items-center justify-center mx-auto">
               <AlertCircle className="w-8 h-8 text-white" />
             </div>
-            <div className="space-y-2">
-              <h1 className="text-xl font-semibold text-white">Access Denied</h1>
-            </div>
+            <h1 className="text-xl font-semibold text-white">Authentication Failed</h1>
             <Alert variant="destructive" className="bg-red-950/50 border-red-800 text-red-200">
               <AlertDescription>{error}</AlertDescription>
             </Alert>
-            <div className="flex gap-4 justify-center">
-              <Button onClick={handleRetry} className="bg-emerald-600 hover:bg-emerald-700">
-                Back to Login
-              </Button>
-            </div>
+            <Button
+              onClick={() => navigate('/login')}
+              className="bg-emerald-600 hover:bg-emerald-700"
+            >
+              Back to Login
+            </Button>
           </>
         ) : null}
       </div>

@@ -109,6 +109,35 @@ export const verifySupabaseUser = async (
       setCachedUser(cacheKey, dbUser);
     }
 
+    // Apply the same authorization checks as the authenticate middleware
+    if (dbUser.isBlocked) {
+      res.status(403).json({
+        success: false,
+        error: 'Your account has been blocked. Please contact an administrator.'
+      });
+      return;
+    }
+
+    if (!dbUser.isAdmin && dbUser.approvalStatus === 'PENDING') {
+      res.status(403).json({
+        success: false,
+        error: 'ACCOUNT_PENDING_APPROVAL',
+        message: 'Your account is awaiting admin verification.'
+      });
+      return;
+    }
+
+    if (!dbUser.isAdmin && dbUser.approvalStatus === 'REJECTED') {
+      res.status(403).json({
+        success: false,
+        error: 'ACCOUNT_REJECTED',
+        message: dbUser.rejectionReason
+          ? `Your registration was rejected. Reason: ${dbUser.rejectionReason}`
+          : 'Your registration was not approved.'
+      });
+      return;
+    }
+
     // Attach user to request
     req.user = dbUser;
 

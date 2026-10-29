@@ -80,5 +80,20 @@ export const clearRequestUserCache = (): void => {
   // no-op: cache is now process-level, not request-scoped
 };
 
+// Immediately evict all cache entries for a given email.
+// Call this after any admin action that changes a user's status
+// (approve, reject, block, unblock) so the next request gets a fresh DB read
+// instead of a stale cached record.
+export const invalidateCacheForEmail = (email: string): void => {
+  const emailKey = `email:${email}`;
+  userCache.delete(emailKey);
+  // Also evict any token-keyed entries for this user (iterate to find them)
+  for (const [key, entry] of userCache.entries()) {
+    if (entry.user.email === email) {
+      userCache.delete(key);
+    }
+  }
+};
+
 export default prisma;
 export { prisma };

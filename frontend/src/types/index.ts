@@ -3,6 +3,7 @@ export type UserApprovalStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
 
 export interface User {
   id: string;
+  supabaseUserId?: string;
   email: string;
   name: string;
   phone?: string;

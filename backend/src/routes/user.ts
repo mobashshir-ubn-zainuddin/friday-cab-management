@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { prisma } from '../utils/prisma';
+import { prisma, invalidateCacheForEmail } from '../utils/prisma';
 import { authenticate, authorizeAdmin } from '../middleware/auth';
 import { validateBody } from '../middleware/validation';
 import { AuthenticatedRequest } from '../types';
@@ -305,6 +305,9 @@ router.patch('/:id/block', authenticate, authorizeAdmin, async (req: Authenticat
         isBlocked: true
       }
     });
+
+    // Flush cached record so the block takes effect immediately on next request
+    invalidateCacheForEmail(user.email);
 
     res.json({
       success: true,

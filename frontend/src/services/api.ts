@@ -1,6 +1,7 @@
 import axios, { AxiosError } from 'axios';
 import type { AxiosInstance, AxiosRequestConfig, AxiosResponse, InternalAxiosRequestConfig } from 'axios';
 import type { ApiResponse, ApproveUserResponse, RejectUserResponse, BlockUserResponse, SetAdminResponse, PaginatedUsersResponse } from '@/types';
+import { supabase } from '@/lib/supabase';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
@@ -34,18 +35,19 @@ const api: AxiosInstance = axios.create({
   timeout: 15000
 });
 
-// Request interceptor to add auth token
+// Request interceptor: attach the current Supabase access token.
+// Previously read from localStorage('token') — but we switched Supabase to
+// sessionStorage and removed all localStorage writes, so that key is always null.
+// Now we read directly from the Supabase client (fast: just reads sessionStorage).
 api.interceptors.request.use(
-  (config) => {
-    const token = localStorage.getItem('token');
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
+  async (config) => {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (session?.access_token) {
+      config.headers.Authorization = `Bearer ${session.access_token}`;
     }
     return config;
   },
-  (error) => {
-    return Promise.reject(error);
-  }
+  (error) => Promise.reject(error)
 );
 
 // Request deduplication interceptor - wraps the actual request to enable deduplication
@@ -87,9 +89,8 @@ api.interceptors.response.use(
       }
     }
     if (error.response?.status === 401) {
-      // Token expired or invalid
-      localStorage.removeItem('token');
-      localStorage.removeItem('user');
+      // Token expired or invalid — sign out via Supabase and redirect
+      await supabase.auth.signOut();
       window.location.href = '/login';
     }
     return Promise.reject(error);

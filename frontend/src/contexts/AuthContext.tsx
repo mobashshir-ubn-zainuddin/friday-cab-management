@@ -78,7 +78,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const response = await authApi.syncUser();
       const userData = response.user;
       setUser(userData);
-      localStorage.setItem('user', JSON.stringify(userData));
       lastSyncedUserId.current = userId;
       lastSyncTime.current = Date.now();
       currentSessionRef.current = { user: supabaseUser, expiresAt: Date.now() + SYNC_CACHE_DURATION };
@@ -88,7 +87,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const errorMsg = error?.message || '';
       if (errorMsg === 'ACCOUNT_PENDING_APPROVAL') {
         setUser(null);
-        localStorage.removeItem('user');
         alert('Your account is awaiting admin verification. Please wait for an admin to approve your registration.');
         await logout();
         return;
@@ -96,7 +94,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
       if (errorMsg === 'ACCOUNT_REJECTED') {
         setUser(null);
-        localStorage.removeItem('user');
         alert('Your registration was not approved. Please contact an administrator.');
         await logout();
         return;
@@ -104,7 +101,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
       if (errorMsg === 'ACCOUNT_NOT_FOUND') {
         setUser(null);
-        localStorage.removeItem('user');
         alert('No account found for this email. Please register at /register first.');
         await logout();
         return;
@@ -114,7 +110,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       try {
         const userData = await authApi.getCurrentUser();
         setUser(userData as User);
-        localStorage.setItem('user', JSON.stringify(userData));
         lastSyncedUserId.current = userId;
         lastSyncTime.current = Date.now();
       } catch (err: any) {
@@ -122,7 +117,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const currentErrorMsg = err?.message || '';
         if (currentErrorMsg === 'ACCOUNT_PENDING_APPROVAL' || currentErrorMsg === 'ACCOUNT_REJECTED' || currentErrorMsg === 'ACCOUNT_NOT_FOUND') {
           setUser(null);
-          localStorage.removeItem('user');
           alert(
             currentErrorMsg === 'ACCOUNT_PENDING_APPROVAL'
               ? 'Your account is awaiting admin verification.'
@@ -148,7 +142,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const { data: { session } } = await supabase.auth.getSession();
     if (session) {
-      localStorage.setItem('token', session.access_token);
       // Store session for token refresh detection
       currentSessionRef.current = { 
         user: session.user, 
@@ -165,8 +158,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       console.log('Auth event:', event);
       
       if (session) {
-        localStorage.setItem('token', session.access_token);
-        
         // Only sync on SIGNED_IN (initial login)
         // Skip TOKEN_REFRESHED and USER_UPDATED to avoid repeated syncs
         // USER_UPDATED will be handled by explicit refreshUser() calls
@@ -178,8 +169,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
       } else {
         // SIGNED_OUT
-        localStorage.removeItem('token');
-        localStorage.removeItem('user');
         setUser(null);
         lastSyncedUserId.current = null;
         lastSyncTime.current = 0;
@@ -199,8 +188,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const logout = async () => {
     await supabase.auth.signOut();
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
     setUser(null);
     lastSyncedUserId.current = null;
     lastSyncTime.current = 0;
@@ -213,7 +200,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     try {
       const userData = await authApi.getCurrentUser();
       setUser(userData as User);
-      localStorage.setItem('user', JSON.stringify(userData));
       if (currentSessionRef.current?.user) {
         lastSyncedUserId.current = currentSessionRef.current.user.id;
         lastSyncTime.current = Date.now();

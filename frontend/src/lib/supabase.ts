@@ -11,11 +11,14 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
     autoRefreshToken: true,
     persistSession: true,
-    // Disabled so SupabaseAuthCallback handles the code exchange manually.
-    // With this true, Supabase auto-consumes the one-time code before our
-    // component runs, causing the manual exchangeCodeForSession call to fail
-    // and fall back to the previously stored (wrong) session.
-    detectSessionInUrl: false
+    detectSessionInUrl: false,
+    // Use sessionStorage instead of localStorage so sessions are tied to the
+    // browser tab/window and cleared when the browser is closed.
+    // With localStorage (the default), User A's session persists indefinitely —
+    // the next person who opens the same browser gets auto-logged in as User A
+    // without entering any credentials. sessionStorage prevents this: closing
+    // the browser/tab wipes the session, and each tab is fully independent.
+    storage: window.sessionStorage
   }
 });
 

@@ -80,7 +80,7 @@ api.interceptors.response.use(
     }
     return response;
   },
-  (error: AxiosError<ApiResponse>) => {
+  async (error: AxiosError<ApiResponse>) => {
     // Clean up pending request cache on error
     if (error.config) {
       const key = getRequestKey(error.config);

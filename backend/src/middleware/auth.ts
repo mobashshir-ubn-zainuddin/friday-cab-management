@@ -32,7 +32,9 @@ export const authenticate = async (
     }
 
     // Check cache first (token -> user)
-    const cacheKey = `token:${token.substring(0, 32)}`;
+    // Use full token as cache key — substring(0,32) is identical for every
+    // Supabase JWT (same base64 header) and caused cross-user cache poisoning.
+    const cacheKey = `token:${token}`;
     const cachedUser = getCachedUser(cacheKey);
     
     let user: any;

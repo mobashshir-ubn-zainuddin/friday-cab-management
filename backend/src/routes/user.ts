@@ -295,6 +295,8 @@ router.patch('/:id/admin', authenticate, authorizeAdmin, async (req: Authenticat
       }
     });
 
+    invalidateCacheForEmail(user.email);
+
     res.json({
       success: true,
       data: user,

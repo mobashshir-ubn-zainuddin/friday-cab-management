@@ -1,6 +1,6 @@
 # Friday Cab Management System
 
-A full-stack cab booking platform for IIT Kharagpur students travelling to Friday prayer. It covers the whole trip lifecycle: trip creation, student booking, cab allocation, attendance, post-trip cost sharing and online payment, plus an admin panel for users and analytics.
+A full-stack cab booking platform for IIT Kharagpur students. It covers the whole trip lifecycle: trip creation, student booking, cab allocation, attendance, post-trip cost sharing and online payment, plus an admin panel for users and analytics.
 
 > **Business rule:** students do not pay when booking. After the trip, the admin enters the total cost, it is split equally among the riders, and each rider pays their share online.
 

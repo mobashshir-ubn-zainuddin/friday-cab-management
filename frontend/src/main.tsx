@@ -3,7 +3,10 @@ import ReactDOM from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import App from './App';
 import ErrorBoundary from './components/ErrorBoundary';
+import { initPwa } from './lib/pwaInstall';
 import './index.css';
+
+initPwa();
 
 // Purge any Supabase session that was previously stored in localStorage.
 // We now use sessionStorage (see supabase.ts), so old localStorage entries

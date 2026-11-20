@@ -80,51 +80,38 @@ router.get('/', authenticate, authorizeAdmin, async (req: AuthenticatedRequest, 
       ORDER BY date
     `;
 
-    const [
-      dailyStatsRaw,
-      totalTrips,
-      totalBookings,
-      totalRevenue,
-      totalExpenses,
-      vehicleDistribution,
-      paymentStatusDistribution
-    ] = await Promise.all([
-      dailyStatsPromise,
-      prisma.trip.count({
-        where: { date: { gte: startDate, lte: endDate } }
-      }),
-      prisma.booking.count({
-        where: {
-          trip: { date: { gte: startDate, lte: endDate } },
-          status: { in: ['CONFIRMED', 'ATTENDED'] }
-        }
-      }),
-      prisma.payment.aggregate({
-        where: {
-          trip: { date: { gte: startDate, lte: endDate } },
-          status: 'COMPLETED'
-        },
-        _sum: { amount: true }
-      }),
-      prisma.trip.aggregate({
-        where: { date: { gte: startDate, lte: endDate } },
-        _sum: { totalCost: true }
-      }),
-      prisma.cab.groupBy({
-        by: ['vehicleType'],
-        _count: { id: true }
-      }),
-      prisma.payment.groupBy({
-        by: ['status'],
-        where: { createdAt: { gte: startDate, lte: endDate } },
-        _count: { id: true },
-        _sum: { amount: true }
-      })
-    ]);
+    // All summary metrics in one statement (was 6 parallel queries, which forced
+    // extra pool connections to open mid-request). Timestamp columns are naive UTC.
+    const start = startDate.toISOString();
+    const end = endDate.toISOString();
+    const summaryPromise = prisma.$queryRaw<any[]>`
+      SELECT
+        (SELECT COUNT(*) FROM "Trip" WHERE date >= ${start}::timestamp AND date <= ${end}::timestamp) AS "totalTrips",
+        (SELECT COUNT(*) FROM "Booking" b JOIN "Trip" t ON t.id = b."tripId"
+          WHERE t.date >= ${start}::timestamp AND t.date <= ${end}::timestamp
+            AND b.status IN ('CONFIRMED', 'ATTENDED')) AS "totalBookings",
+        (SELECT COALESCE(SUM(p.amount), 0) FROM "Payment" p JOIN "Trip" t ON t.id = p."tripId"
+          WHERE t.date >= ${start}::timestamp AND t.date <= ${end}::timestamp
+            AND p.status = 'COMPLETED') AS "totalRevenue",
+        (SELECT COALESCE(SUM("totalCost"), 0) FROM "Trip"
+          WHERE date >= ${start}::timestamp AND date <= ${end}::timestamp) AS "totalExpenses",
+        (SELECT COALESCE(json_agg(json_build_object('vehicleType', v."vehicleType", '_count', json_build_object('id', v.c))), '[]'::json)
+          FROM (SELECT "vehicleType", COUNT(id) AS c FROM "Cab" GROUP BY "vehicleType") v) AS "vehicleDistribution",
+        (SELECT COALESCE(json_agg(json_build_object('status', x.status, '_count', json_build_object('id', x.c), '_sum', json_build_object('amount', x.s))), '[]'::json)
+          FROM (SELECT status, COUNT(id) AS c, SUM(amount) AS s FROM "Payment"
+                WHERE "createdAt" >= ${start}::timestamp AND "createdAt" <= ${end}::timestamp
+                GROUP BY status) x) AS "paymentStatusDistribution"
+    `;
+
+    const [dailyStatsRaw, [summary]] = await Promise.all([dailyStatsPromise, summaryPromise]);
     const queryMs = Number(process.hrtime.bigint() - queryStart) / 1_000_000;
 
-    const totalRevenueAmount = totalRevenue._sum.amount || 0;
-    const totalExpensesAmount = totalExpenses._sum.totalCost || 0;
+    const totalTrips = Number(summary.totalTrips);
+    const totalBookings = Number(summary.totalBookings);
+    const vehicleDistribution = summary.vehicleDistribution;
+    const paymentStatusDistribution = summary.paymentStatusDistribution;
+    const totalRevenueAmount = Number(summary.totalRevenue);
+    const totalExpensesAmount = Number(summary.totalExpenses);
     const pendingAmount = 0; // Calculate from payments if needed
 
     // Format daily stats

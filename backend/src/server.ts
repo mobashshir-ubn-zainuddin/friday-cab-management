@@ -148,7 +148,8 @@ process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 // Server startup
 const server = app.listen(PORT, () => {
   // Open pool connections up front: each new TLS connection to the DB costs several round trips.
-  Promise.all(Array.from({ length: 5 }, () => prisma.$queryRaw`SELECT 1`)).catch((err) =>
+  const poolSize = Number(process.env.DATABASE_URL?.match(/connection_limit=(\d+)/)?.[1] ?? 10);
+  Promise.all(Array.from({ length: poolSize }, () => prisma.$queryRaw`SELECT 1`)).catch((err) =>
     console.error('[DB] Warm-up failed:', err?.message || err)
   );
   console.log(`🚀 Server running on port ${PORT}`);

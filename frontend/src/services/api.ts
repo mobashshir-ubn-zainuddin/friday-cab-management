@@ -12,10 +12,15 @@ let _currentToken: string | null = null;
 // Cleared on any mutation and whenever the signed-in token changes.
 const GET_CACHE_TTL_MS = 15_000;
 const getCache = new Map<string, { data: unknown; expiresAt: number }>();
-export const clearApiCache = (): void => getCache.clear();
+// Identical GETs already in flight share one request.
+const inFlightGets = new Map<string, Promise<unknown>>();
+export const clearApiCache = (): void => {
+  getCache.clear();
+  inFlightGets.clear();
+};
 
 export const setCurrentToken = (token: string | null): void => {
-  if (token !== _currentToken) getCache.clear();
+  if (token !== _currentToken) clearApiCache();
   _currentToken = token;
 };
 
@@ -88,7 +93,7 @@ api.interceptors.request.use(
 // Response interceptor for error handling + cache management
 api.interceptors.response.use(
   (response) => {
-    if (response.config.method?.toLowerCase() !== 'get') getCache.clear();
+    if (response.config.method?.toLowerCase() !== 'get') clearApiCache();
     // Clean up pending request cache
     const key = getRequestKey(response.config);
     if (key) {
@@ -99,7 +104,7 @@ api.interceptors.response.use(
   (error: AxiosError<ApiResponse>) => {
     // Clean up pending request cache on error
     if (error.config) {
-      if (error.config.method?.toLowerCase() !== 'get') getCache.clear();
+      if (error.config.method?.toLowerCase() !== 'get') clearApiCache();
       const key = getRequestKey(error.config);
       if (key) {
         pendingRequests.delete(key);
@@ -169,13 +174,26 @@ export const apiClient = {
     const cacheKey = `${url}?${JSON.stringify(config?.params ?? {})}`;
     const cached = getCache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) return cached.data as T;
+    const pending = inFlightGets.get(cacheKey);
+    if (pending) return pending as Promise<T>;
 
-    const response = await api.get<ApiResponse<T>>(url, config);
-    if (!response.data.success) {
-      throw new Error(response.data.error || 'Request failed');
-    }
-    getCache.set(cacheKey, { data: response.data.data, expiresAt: Date.now() + GET_CACHE_TTL_MS });
-    return response.data.data as T;
+    const request: Promise<T> = (async () => {
+      try {
+        const response = await api.get<ApiResponse<T>>(url, config);
+        if (!response.data.success) {
+          throw new Error(response.data.error || 'Request failed');
+        }
+        // Skip caching if a write or token change cleared the cache mid-flight.
+        if (inFlightGets.get(cacheKey) === request) {
+          getCache.set(cacheKey, { data: response.data.data, expiresAt: Date.now() + GET_CACHE_TTL_MS });
+        }
+        return response.data.data as T;
+      } finally {
+        if (inFlightGets.get(cacheKey) === request) inFlightGets.delete(cacheKey);
+      }
+    })();
+    inFlightGets.set(cacheKey, request);
+    return request;
   },
 
   post: async <T>(url: string, data?: any, config?: AxiosRequestConfig & { idempotencyKey?: string }): Promise<T> => {

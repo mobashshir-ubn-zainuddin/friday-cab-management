@@ -6,17 +6,16 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
-import { Car, Loader2, Mail, CheckCircle2 } from 'lucide-react';
+import { Car, Loader2, LogIn, Eye, EyeOff } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
-
-const CALLBACK_URL = `${window.location.origin}/auth/callback`;
 
 const Login = () => {
   const { isAuthenticated } = useAuth();
   const navigate = useNavigate();
   const [emailPrefix, setEmailPrefix] = useState('');
-  const [emailLoading, setEmailLoading] = useState(false);
-  const [magicLinkSent, setMagicLinkSent] = useState(false);
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -24,55 +23,45 @@ const Login = () => {
     }
   }, [isAuthenticated, navigate]);
 
-  const handleMagicLinkLogin = async (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!emailPrefix) {
       toast.error('Please enter your email prefix');
       return;
     }
+    if (!password) {
+      toast.error('Please enter your password');
+      return;
+    }
 
     const email = `${emailPrefix.toLowerCase().trim()}@kgpian.iitkgp.ac.in`;
 
-    setEmailLoading(true);
+    setLoading(true);
     try {
-      const { error } = await supabase.auth.signInWithOtp({
+      const { error } = await supabase.auth.signInWithPassword({
         email,
-        options: {
-          emailRedirectTo: CALLBACK_URL,
-          // Prevent Supabase from silently creating accounts for unregistered emails.
-          // Only users who went through /register and were approved should be able to log in.
-          shouldCreateUser: false
-        }
+        password,
       });
 
       if (error) {
-        // Supabase returns a generic error when the email isn't registered.
-        // Redirect to register instead of showing a cryptic message.
-        if (
-          error.message?.toLowerCase().includes('not found') ||
-          error.message?.toLowerCase().includes('user not found') ||
-          error.message?.toLowerCase().includes('signup') ||
-          error.status === 422 ||
-          error.status === 400
-        ) {
-          toast.error('No account found for this email. Please register first.');
-          navigate('/register');
-          return;
+        if (error.message?.toLowerCase().includes('invalid login credentials')) {
+          toast.error('Invalid email or password. Please check your credentials.');
+        } else if (error.message?.toLowerCase().includes('email not confirmed')) {
+          toast.error('Your account is pending admin approval. Please wait for approval.');
+        } else {
+          toast.error(error.message || 'Login failed. Please try again.');
         }
-        throw error;
+        return;
       }
 
-      setMagicLinkSent(true);
-      toast.success('Check your email for the sign-in link. Check your spam too.');
+      toast.success('Logged in successfully!');
     } catch (error: any) {
-      console.error('Magic link error:', error);
-      toast.error(error.message || 'Failed to send sign-in link');
+      console.error('Login error:', error);
+      toast.error(error.message || 'Failed to log in');
     } finally {
-      setEmailLoading(false);
+      setLoading(false);
     }
   };
-
-  const sentEmail = `${emailPrefix.toLowerCase().trim()}@kgpian.iitkgp.ac.in`;
 
   return (
     <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
@@ -82,92 +71,83 @@ const Login = () => {
             <Car className="w-10 h-10 text-white" />
           </div>
           <h1 className="text-3xl font-bold text-white">Cab Management</h1>
-          <p className="text-slate-400 mt-2">Log In to your account</p>
+          <p className="text-slate-400 mt-2">Log in to your account</p>
         </div>
 
         <Card className="bg-slate-900 border-slate-800">
-          {magicLinkSent ? (
-            <>
-              <CardHeader className="text-center">
-                <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-emerald-500/10">
-                  <CheckCircle2 className="h-8 w-8 text-emerald-500" />
-                </div>
-                <CardTitle className="text-2xl text-white">Check your email</CardTitle>
-                <CardDescription className="text-slate-400">
-                  A secure sign-in link has been sent to{' '}
-                  <span className="font-medium text-slate-200">{sentEmail}</span>.
-                  Click the link to continue. Check your spam folder also.
-                </CardDescription>
-              </CardHeader>
-              <CardFooter className="flex flex-col space-y-4 pt-2">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  className="w-full text-slate-400 hover:text-white"
-                  onClick={() => setMagicLinkSent(false)}
-                >
-                  Use a different email
-                </Button>
-                <div className="text-center text-sm text-slate-400">
-                  New here?{' '}
-                  <Link to="/register" className="text-emerald-500 hover:text-emerald-400 font-medium">
-                    Create an account
-                  </Link>
-                </div>
-              </CardFooter>
-            </>
-          ) : (
-            <form onSubmit={handleMagicLinkLogin}>
-              <CardHeader>
-                <CardTitle className="text-2xl text-white">Log In</CardTitle>
-                <CardDescription className="text-slate-400">
-                  Enter your institute email prefix
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="email" className="text-slate-300">Institute Email</Label>
-                  <div className="flex">
-                    <Input
-                      id="email"
-                      placeholder="e.g. mobo"
-                      className="bg-slate-800 border-slate-700 text-white rounded-r-none focus-visible:ring-emerald-500"
-                      value={emailPrefix}
-                      onChange={(e) => setEmailPrefix(e.target.value)}
-                      disabled={emailLoading}
-                    />
-                    <div className="bg-slate-800 border border-l-0 border-slate-700 text-slate-400 px-3 flex items-center rounded-r-md text-sm font-medium whitespace-nowrap">
-                      @kgpian.iitkgp.ac.in
-                    </div>
+          <form onSubmit={handleLogin}>
+            <CardHeader>
+              <CardTitle className="text-2xl text-white">Log In</CardTitle>
+              <CardDescription className="text-slate-400">
+                Enter your institute email and password
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="email" className="text-slate-300">Institute Email</Label>
+                <div className="flex">
+                  <Input
+                    id="email"
+                    placeholder="e.g. mobo"
+                    className="bg-slate-800 border-slate-700 text-white rounded-r-none focus-visible:ring-emerald-500"
+                    value={emailPrefix}
+                    onChange={(e) => setEmailPrefix(e.target.value)}
+                    disabled={loading}
+                  />
+                  <div className="bg-slate-800 border border-l-0 border-slate-700 text-slate-400 px-3 flex items-center rounded-r-md text-sm font-medium whitespace-nowrap">
+                    @kgpian.iitkgp.ac.in
                   </div>
                 </div>
+              </div>
 
-                <Button
-                  type="submit"
-                  className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold h-11"
-                  disabled={emailLoading}
-                >
-                  {emailLoading ? (
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  ) : (
-                    <Mail className="mr-2 h-4 w-4" />
-                  )}
-                  SEND SIGN-IN LINK
-                </Button>
-              </CardContent>
-              <CardFooter className="flex flex-col space-y-4 pt-2">
-                <div className="text-center text-sm text-slate-400">
-                  New here?{' '}
-                  <Link to="/register" className="text-emerald-500 hover:text-emerald-400 font-medium">
-                    Create an account
-                  </Link>
+              <div className="space-y-2">
+                <Label htmlFor="password" className="text-slate-300">Password</Label>
+                <div className="relative">
+                  <Input
+                    id="password"
+                    type={showPassword ? 'text' : 'password'}
+                    placeholder="Enter your password"
+                    className="bg-slate-800 border-slate-700 text-white focus-visible:ring-emerald-500 pr-10"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    disabled={loading}
+                  />
+                  <button
+                    type="button"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+                    onClick={() => setShowPassword(!showPassword)}
+                    tabIndex={-1}
+                  >
+                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
                 </div>
-                <div className="text-center text-xs text-slate-500">
-                  By logging in, you agree to our terms
-                </div>
-              </CardFooter>
-            </form>
-          )}
+              </div>
+
+              <Button
+                type="submit"
+                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold h-11"
+                disabled={loading}
+              >
+                {loading ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <LogIn className="mr-2 h-4 w-4" />
+                )}
+                LOG IN
+              </Button>
+            </CardContent>
+            <CardFooter className="flex flex-col space-y-4 pt-2">
+              <div className="text-center text-sm text-slate-400">
+                New here?{' '}
+                <Link to="/register" className="text-emerald-500 hover:text-emerald-400 font-medium">
+                  Create an account
+                </Link>
+              </div>
+              <div className="text-center text-xs text-slate-500">
+                By logging in, you agree to our terms
+              </div>
+            </CardFooter>
+          </form>
         </Card>
       </div>
     </div>

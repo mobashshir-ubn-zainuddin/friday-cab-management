@@ -208,7 +208,7 @@ export const authApi = {
   syncUser: () => apiClient.post<{ user: any }>('/auth/sync-user', undefined, { idempotencyKey: 'sync-user' }),
   getCurrentUser: () => apiClient.get('/auth/me'),
   logout: () => apiClient.post('/auth/logout'),
-  signup: async (data: { emailPrefix: string; name: string; phone: string; rollNumber: string; department: string }) => {
+  signup: async (data: { emailPrefix: string; name: string; phone: string; rollNumber: string; department: string; hall: string; password: string }) => {
     const response: AxiosResponse<ApiResponse<{ user: any }>> = await api.post('/auth/signup', data);
     if (!response.data.success) {
       throw new Error(response.data.error || 'Request failed');

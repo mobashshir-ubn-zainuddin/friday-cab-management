@@ -295,6 +295,53 @@ export const sendBookingConfirmation = async (
   });
 };
 
+export const sendApprovalNotification = async (
+  to: string,
+  userName: string,
+  loginUrl: string
+): Promise<EmailSendResult> => {
+  const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { background: linear-gradient(135deg, #059669 0%, #10b981 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
+        .content { background: #f9fafb; padding: 30px; border-radius: 0 0 10px 10px; }
+        .cta-button { display: inline-block; background: #059669; color: white !important; padding: 14px 28px; text-decoration: none; border-radius: 6px; font-weight: bold; margin-top: 20px; }
+        .footer { text-align: center; margin-top: 30px; color: #9ca3af; font-size: 12px; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header">
+          <h1>✅ Account Approved!</h1>
+          <p>Cab Management System</p>
+        </div>
+        <div class="content">
+          <p>Hi ${userName},</p>
+          <p>Great news! Your account has been approved by an administrator. You can now log in using your registered email and password.</p>
+          <center>
+            <a class="cta-button" href="${loginUrl}">Log In Now →</a>
+          </center>
+          <p style="margin-top: 20px; color: #6b7280; font-size: 14px;">If you did not register for this service, please ignore this email.</p>
+        </div>
+        <div class="footer">
+          <p>This is an automated message from Cab Management System · IIT Kharagpur</p>
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+
+  return sendEmail({
+    to,
+    subject: '✅ Account Approved — Cab Management System',
+    html
+  });
+};
+
 export const sendNewRegistrationToAdmins = async (
   adminEmails: string[],
   userData: {
@@ -303,6 +350,7 @@ export const sendNewRegistrationToAdmins = async (
     phone?: string | null;
     rollNumber?: string | null;
     department?: string | null;
+    hall?: string | null;
     createdAt: Date | string;
   },
   adminDashboardUrl: string
@@ -349,6 +397,7 @@ export const sendNewRegistrationToAdmins = async (
             ${userData.phone ? `<div class="row"><span class="label">Phone</span><span class="value">${userData.phone}</span></div>` : ''}
             ${userData.rollNumber ? `<div class="row"><span class="label">Roll Number</span><span class="value">${userData.rollNumber}</span></div>` : ''}
             ${userData.department ? `<div class="row"><span class="label">Department</span><span class="value">${userData.department}</span></div>` : ''}
+            ${userData.hall ? `<div class="row"><span class="label">Hall</span><span class="value">${userData.hall}</span></div>` : ''}
             <div class="row"><span class="label">Registered At</span><span class="value">${createdAtFormatted}</span></div>
           </div>
 

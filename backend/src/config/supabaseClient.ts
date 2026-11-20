@@ -27,4 +27,17 @@ export const supabaseAdmin = supabaseServiceKey
     })
   : null;
 
+// Verifies a Supabase access token. With the project's asymmetric (ES256) signing key
+// this checks signature and expiry locally against the cached public key, avoiding a
+// ~300-1000 ms round trip to Supabase Auth per new token. Other algorithms fall back
+// to a network check inside getClaims.
+export const verifyAccessToken = async (
+  token: string
+): Promise<{ id: string; email?: string } | null> => {
+  const { data, error } = await supabase.auth.getClaims(token);
+  const claims = data?.claims;
+  if (error || !claims?.sub || claims.role !== 'authenticated') return null;
+  return { id: claims.sub, email: claims.email as string | undefined };
+};
+
 export default supabase;

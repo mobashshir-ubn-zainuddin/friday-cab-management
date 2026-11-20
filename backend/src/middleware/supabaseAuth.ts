@@ -1,5 +1,5 @@
 import { Response, NextFunction } from 'express';
-import { supabase } from '../config/supabaseClient';
+import { verifyAccessToken } from '../config/supabaseClient';
 import { prisma, getCachedUser, setCachedUser, clearRequestUserCache } from '../utils/prisma';
 import { AuthenticatedRequest } from '../types';
 import { User } from '@prisma/client';
@@ -53,10 +53,9 @@ export const verifySupabaseUser = async (
       user = { id: cachedUser.supabaseUserId, email: cachedUser.email };
       dbUser = cachedUser;
     } else {
-      // Verify token with Supabase
-      const { data: { user: supabaseUser }, error } = await supabase.auth.getUser(token);
+      const supabaseUser = await verifyAccessToken(token);
 
-      if (error || !supabaseUser) {
+      if (!supabaseUser) {
         res.status(401).json({
           success: false,
           error: 'Invalid token'

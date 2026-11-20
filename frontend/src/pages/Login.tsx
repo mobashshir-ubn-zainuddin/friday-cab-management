@@ -6,8 +6,9 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
-import { Car, Loader2, LogIn, Eye, EyeOff } from 'lucide-react';
+import { Car, Loader2, LogIn, Eye, EyeOff, Smartphone } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import { usePwaInstall } from '@/lib/pwaInstall';
 
 const Login = () => {
   const { isAuthenticated } = useAuth();
@@ -16,6 +17,17 @@ const Login = () => {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const pwa = usePwaInstall();
+  const [showInstallHelp, setShowInstallHelp] = useState(false);
+
+  const handleInstall = async () => {
+    const result = await pwa.install();
+    if (result === 'accepted') {
+      toast.success('Friday Cab was added to your home screen.');
+    } else if (result === 'unavailable') {
+      setShowInstallHelp((v) => !v);
+    }
+  };
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -149,6 +161,39 @@ const Login = () => {
             </CardFooter>
           </form>
         </Card>
+
+        {!pwa.installed && (
+          <div className="mt-6 text-center">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={handleInstall}
+              className="w-full h-11 border-emerald-700 bg-transparent text-emerald-400 hover:bg-emerald-950 hover:text-emerald-300"
+            >
+              <Smartphone className="mr-2 h-4 w-4" />
+              Install app on your phone
+            </Button>
+            {showInstallHelp && (
+              <div className="mt-3 rounded-md border border-slate-800 bg-slate-900 p-4 text-left text-sm text-slate-300 space-y-2">
+                {pwa.isIOS ? (
+                  <p>
+                    In <span className="font-medium text-white">Safari</span>, tap the{' '}
+                    <span className="font-medium text-white">Share</span> button, then{' '}
+                    <span className="font-medium text-white">Add to Home Screen</span>.
+                  </p>
+                ) : (
+                  <p>
+                    In <span className="font-medium text-white">Chrome</span>, tap the{' '}
+                    <span className="font-medium text-white">⋮</span> menu (top right), then{' '}
+                    <span className="font-medium text-white">Add to Home screen</span> or{' '}
+                    <span className="font-medium text-white">Install app</span>.
+                  </p>
+                )}
+                <p className="text-slate-400">The Friday Cab icon will appear on your home screen and open like an app, without the browser bar.</p>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

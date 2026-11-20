@@ -59,6 +59,13 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       // Discard if a newer login has already taken over
       if (generation !== syncGeneration.current) return;
 
+      if (response.user?.email?.toLowerCase() !== email.toLowerCase()) {
+        console.error('[Auth] Synced profile does not match signed-in account');
+        setUser(null);
+        await logoutRef.current();
+        return;
+      }
+
       setUser(response.user);
       lastSyncedUserId.current = supabaseUser.id;
     } catch (error: any) {

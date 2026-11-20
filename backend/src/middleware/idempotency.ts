@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import { createHash } from 'crypto';
 
 // In-memory idempotency store (use Redis in production for multi-instance deployments)
 // Stores completed responses
@@ -27,11 +28,17 @@ export const idempotencyMiddleware = (
   res: Response,
   next: NextFunction
 ): void => {
-  const idempotencyKey = req.headers['idempotency-key'] as string;
-  
-  if (!idempotencyKey) {
+  const clientKey = req.headers['idempotency-key'] as string;
+
+  if (!clientKey) {
     return next();
   }
+
+  // Scope cached responses to the caller and endpoint; a client-supplied key alone
+  // is shared across users and would replay one user's response to another.
+  const idempotencyKey = createHash('sha256')
+    .update(`${req.headers.authorization ?? 'anon'}|${req.method}|${req.originalUrl}|${clientKey}`)
+    .digest('hex');
 
   // Check if we have a cached response (completed request)
   const cached = idempotencyStore.get(idempotencyKey);

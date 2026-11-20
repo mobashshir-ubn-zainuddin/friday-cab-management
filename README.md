@@ -95,7 +95,7 @@ flowchart TB
 
     SBClient -- "signInWithPassword" --> SBAuth
     ApiClient -- "Bearer access token" --> MW
-    AuthMW -- "getUser(token)" --> SBAuth
+    AuthMW -. "public signing key (fetched once, cached)" .-> SBAuth
     Routes -- "Prisma" --> PG
     Job --> PG
     Routes -- "create order, fetch payments" --> RZP
@@ -107,7 +107,7 @@ flowchart TB
 **How the pieces fit together**
 1. The browser logs in directly with Supabase Auth and receives an access token.
 2. Every API call to the Express backend carries that token in the `Authorization` header.
-3. The backend verifies the token with Supabase, loads the matching user from PostgreSQL, and checks approval, block and admin status before running the route.
+3. The backend verifies the token's signature locally with Supabase's public key, loads the matching user from PostgreSQL, and checks approval, block and admin status before running the route.
 4. All business data (users, trips, bookings, cabs, payments) lives in PostgreSQL. The frontend never writes to the database directly.
 5. Razorpay handles card/UPI payments. The backend creates orders and verifies every payment server-side, by signature, webhook or direct status query.
 
@@ -187,7 +187,7 @@ sequenceDiagram
         FE->>FE: SIGNED_IN event → store token for API client
         FE->>API: POST /api/auth/sync-user (Bearer token)
         API->>API: Token in 5-min cache?
-        API->>SA: getUser(token) (on cache miss)
+        API->>API: Verify ES256 signature + expiry locally (public key cached from Supabase)
         API->>API: Email must end with @kgpian.iitkgp.ac.in
         API->>DB: Find User by email
         API->>API: Reject if blocked, PENDING or REJECTED
@@ -198,7 +198,7 @@ sequenceDiagram
 ```
 
 Key points:
-- **Verification on every request.** `authenticate` (and `verifySupabaseUser` on auth routes) validates the bearer token with Supabase Auth, enforces the institute email domain, loads the database user, and rejects blocked, pending or rejected accounts. The result is cached per token for 5 minutes.
+- **Verification on every request.** `authenticate` (and `verifySupabaseUser` on auth routes) verifies the bearer token's ES256 signature and expiry locally against Supabase's public signing key (`verifyAccessToken`, using `supabase.auth.getClaims`; the key is downloaded once and cached, and tokens signed any other way fall back to a network check with Supabase). It then enforces the institute email domain, loads the database user, and rejects blocked, pending or rejected accounts. The result is cached per token for 5 minutes. Because verification is local, a token stays valid until it expires (at most 1 hour) even after logout; blocked, rejected and deleted users are still refused because the database check runs on every cache miss and admin actions clear the cache.
 - **Identity check on the client.** After syncing, the frontend confirms the returned profile belongs to the account that just signed in, and logs out otherwise.
 - **Tab switches are not logins.** supabase-js emits `SIGNED_IN` again when a tab regains focus. If it is for the user already signed in, AuthContext only refreshes the token; it does not re-sync or reload the page.
 - **Session scope.** Sessions live in `sessionStorage`, so closing the browser ends the session and one person's session never carries over to the next user of a shared computer.
@@ -360,6 +360,7 @@ Retries and double clicks must not repeat a write.
   - the user dashboard, admin dashboard and analytics summary each run as a single SQL statement;
   - list endpoints run their count and page queries in parallel;
   - `relationJoins` loads a list and its related rows in one statement.
+- **Local token verification.** Login tokens are checked against Supabase's cached public key in about 1 ms instead of a 300–1,000 ms network call per new token.
 - **No work on the hot path.** Trip statuses are computed on read and persisted by the background job, not rescanned on every request.
 - **Frontend.** A short GET cache, in-flight request sharing, and no reload when switching browser tabs.
 

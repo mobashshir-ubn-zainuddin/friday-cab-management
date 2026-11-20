@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { prisma, getCachedUser, setCachedUser } from '../utils/prisma';
 import { AuthenticatedRequest } from '../types';
-import { supabase } from '../config/supabaseClient';
+import { verifyAccessToken } from '../config/supabaseClient';
 
 // Authenticate user with Supabase Token
 export const authenticate = async (
@@ -45,11 +45,9 @@ export const authenticate = async (
       dbUser = cachedUser;
     } else {
       // Verify token with Supabase
-      const supabaseStartTime = process.hrtime.bigint();
-      const { data: { user: supabaseUser }, error } = await supabase.auth.getUser(token);
-      const supabaseMs = Number(process.hrtime.bigint() - supabaseStartTime) / 1_000_000;
+      const supabaseUser = await verifyAccessToken(token);
 
-      if (error || !supabaseUser) {
+      if (!supabaseUser) {
         res.status(401).json({
           success: false,
           error: 'Invalid or expired token.'
@@ -246,7 +244,7 @@ export const optionalAuth = async (
       return;
     }
 
-    const { data: { user } } = await supabase.auth.getUser(token);
+    const user = await verifyAccessToken(token);
 
     if (user && user.email?.endsWith('@kgpian.iitkgp.ac.in')) {
       const dbUser = await prisma.user.findUnique({

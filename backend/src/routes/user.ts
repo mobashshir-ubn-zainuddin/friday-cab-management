@@ -24,73 +24,23 @@ router.get('/dashboard', authenticate, async (req: AuthenticatedRequest, res) =>
   try {
     const userId = req.user!.id;
 
-    // Run all independent queries in parallel
+    // One round trip instead of six parallel queries competing for pool connections.
+    // Timestamp columns hold naive UTC values, so compare against a naive UTC literal.
+    const nowUtc = new Date().toISOString();
     const queryStart = process.hrtime.bigint();
-    const [
-      totalTrips,
-      activeBookings,
-      completedTrips,
-      upcomingTrips,
-      pendingPayments,
-      totalSpent
-    ] = await Promise.all([
-      // Get total trips (completed bookings)
-      prisma.booking.count({
-        where: {
-          userId,
-          status: { in: ['ATTENDED', 'NO_SHOW'] }
-        }
-      }),
-
-      // Get active bookings (confirmed bookings for upcoming trips)
-      prisma.booking.count({
-        where: {
-          userId,
-          status: 'CONFIRMED',
-          trip: {
-            status: { in: ['UPCOMING', 'BOOKING_OPEN', 'BOOKING_CLOSED', 'CAB_ASSIGNED'] }
-          }
-        }
-      }),
-
-      // Get completed trips
-      prisma.booking.count({
-        where: {
-          userId,
-          status: 'ATTENDED'
-        }
-      }),
-
-      // Get upcoming trips (business-date aware: any trip not yet departed, using absolute instant comparison)
-      prisma.booking.count({
-        where: {
-          userId,
-          status: 'CONFIRMED',
-          trip: {
-            departureTime: { gte: new Date() }
-          }
-        }
-      }),
-
-      // Get pending payments
-      prisma.payment.count({
-        where: {
-          userId,
-          status: 'PENDING'
-        }
-      }),
-
-      // Get total spent
-      prisma.payment.aggregate({
-        where: {
-          userId,
-          status: 'COMPLETED'
-        },
-        _sum: {
-          amount: true
-        }
-      })
-    ]);
+    const [row] = await prisma.$queryRaw<any[]>`
+      SELECT
+        (SELECT COUNT(*) FROM "Booking" WHERE "userId" = ${userId} AND status IN ('ATTENDED', 'NO_SHOW')) AS "totalTrips",
+        (SELECT COUNT(*) FROM "Booking" b JOIN "Trip" t ON t.id = b."tripId"
+          WHERE b."userId" = ${userId} AND b.status = 'CONFIRMED'
+            AND t.status IN ('UPCOMING', 'BOOKING_OPEN', 'BOOKING_CLOSED', 'CAB_ASSIGNED')) AS "activeBookings",
+        (SELECT COUNT(*) FROM "Booking" WHERE "userId" = ${userId} AND status = 'ATTENDED') AS "completedTrips",
+        (SELECT COUNT(*) FROM "Booking" b JOIN "Trip" t ON t.id = b."tripId"
+          WHERE b."userId" = ${userId} AND b.status = 'CONFIRMED'
+            AND t."departureTime" >= ${nowUtc}::timestamp) AS "upcomingTrips",
+        (SELECT COUNT(*) FROM "Payment" WHERE "userId" = ${userId} AND status = 'PENDING') AS "pendingPayments",
+        (SELECT COALESCE(SUM(amount), 0) FROM "Payment" WHERE "userId" = ${userId} AND status = 'COMPLETED') AS "totalSpent"
+    `;
     const queryMs = Number(process.hrtime.bigint() - queryStart) / 1_000_000;
 
     const totalMs = Number(process.hrtime.bigint() - overallStart) / 1_000_000;
@@ -103,12 +53,12 @@ router.get('/dashboard', authenticate, async (req: AuthenticatedRequest, res) =>
     res.json({
       success: true,
       data: {
-        totalTrips,
-        activeBookings,
-        completedTrips,
-        upcomingTrips,
-        pendingPayments,
-        totalSpent: totalSpent._sum.amount || 0
+        totalTrips: Number(row.totalTrips),
+        activeBookings: Number(row.activeBookings),
+        completedTrips: Number(row.completedTrips),
+        upcomingTrips: Number(row.upcomingTrips),
+        pendingPayments: Number(row.pendingPayments),
+        totalSpent: Number(row.totalSpent)
       }
     });
   } catch (error) {

@@ -25,7 +25,6 @@ import {
   getEffectiveTripStatus,
   isBookingCurrentlyOpen,
   canUserCancelBooking,
-  syncTripStatuses,
   syncSingleTripStatus,
   EffectiveTripStatus
 } from '../utils/tripStatus';
@@ -168,10 +167,7 @@ router.get('/', authenticate, async (req: AuthenticatedRequest, res) => {
   const overallStart = process.hrtime.bigint();
   
   try {
-    // Sync trip statuses before querying to ensure database status is up-to-date
-    await syncTripStatuses(prisma);
-
-    const { 
+    const {
       status, 
       upcoming, 
       page = '1', 
@@ -209,14 +205,8 @@ router.get('/', authenticate, async (req: AuthenticatedRequest, res) => {
       };
     }
 
-    // Time the count query
-    const countStart = process.hrtime.bigint();
-    const total = await prisma.trip.count({ where });
-    const countMs = Number(process.hrtime.bigint() - countStart) / 1_000_000;
-
-    // Time the findMany query - include cabs with currentOccupancy for effective status calculation
-    const findStart = process.hrtime.bigint();
-    const trips = await prisma.trip.findMany({
+    const queryStart = process.hrtime.bigint();
+    const [total, trips] = await Promise.all([prisma.trip.count({ where }), prisma.trip.findMany({
       where,
       include: {
         _count: {
@@ -239,12 +229,11 @@ router.get('/', authenticate, async (req: AuthenticatedRequest, res) => {
       orderBy: { date: 'asc' },
       skip,
       take: limitNum
-    });
-    const findMs = Number(process.hrtime.bigint() - findStart) / 1_000_000;
+    })]);
+    const queryMs = Number(process.hrtime.bigint() - queryStart) / 1_000_000;
 
     const now = new Date();
     // Add user booking status and effective status to each trip
-    // Now that we've synced, effectiveStatus should match the persisted status for non-cancelled trips
     const tripsWithBookingStatus = trips.map(trip => ({
       ...trip,
       userBooking: trip.bookings.length > 0 ? trip.bookings[0] : null,
@@ -255,8 +244,8 @@ router.get('/', authenticate, async (req: AuthenticatedRequest, res) => {
     const totalMs = Number(process.hrtime.bigint() - overallStart) / 1_000_000;
     
     // Log detailed timing for slow requests
-    if (totalMs > 500 || countMs > 200 || findMs > 300) {
-      console.log(`[Trip GET /] Request ${requestId} - Total: ${totalMs.toFixed(2)}ms, Count: ${countMs.toFixed(2)}ms, FindMany: ${findMs.toFixed(2)}ms, Trips: ${trips.length}, Page: ${pageNum}, Limit: ${limitNum}`);
+    if (totalMs > 500) {
+      console.log(`[Trip GET /] Request ${requestId} - Total: ${totalMs.toFixed(2)}ms, Queries: ${queryMs.toFixed(2)}ms, Trips: ${trips.length}, Page: ${pageNum}, Limit: ${limitNum}`);
     }
 
     res.json({

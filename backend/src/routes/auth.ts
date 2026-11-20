@@ -5,7 +5,7 @@ import { z } from 'zod';
 
 import { verifySupabaseUser } from '../middleware/supabaseAuth';
 import { validateBody } from '../middleware/validation';
-import { sendNewRegistrationToAdmins } from '../utils/email';
+import { sendNewRegistrationToAdmins, sendApprovalNotification } from '../utils/email';
 import { supabaseAdmin } from '../config/supabaseClient';
 
 const router = Router();
@@ -39,7 +39,16 @@ const signupSchema = z.object({
     .string()
     .min(2, 'Department is required')
     .max(100, 'Department must be less than 100 characters')
-    .trim()
+    .trim(),
+  hall: z
+    .string()
+    .min(2, 'Hall of residence is required')
+    .max(100, 'Hall name must be less than 100 characters')
+    .trim(),
+  password: z
+    .string()
+    .min(6, 'Password must be at least 6 characters')
+    .max(128, 'Password must be less than 128 characters')
 });
 
 const getAdminEmails = (): string[] => {
@@ -57,6 +66,7 @@ const PUBLIC_USER_SELECT = {
   phone: true,
   rollNumber: true,
   department: true,
+  hall: true,
   isAdmin: true,
   isBlocked: true,
   approvalStatus: true,
@@ -79,7 +89,7 @@ type PublicUserShape = typeof PUBLIC_USER_SELECT;
 //   can decide whether to still show a waiting screen or send magic link.
 router.post('/signup', validateBody(signupSchema), async (req, res) => {
   try {
-    const { emailPrefix, name, phone, rollNumber, department } = req.body;
+    const { emailPrefix, name, phone, rollNumber, department, hall, password } = req.body;
     const email = `${emailPrefix}@kgpian.iitkgp.ac.in`;
     const adminEmails = getAdminEmails();
     const shouldAutoApprove = adminEmails.includes(email.toLowerCase());
@@ -108,7 +118,7 @@ router.post('/signup', validateBody(signupSchema), async (req, res) => {
           ? 'Your registration is already awaiting admin verification. Please wait for approval. A sign-in link will be emailed once your account is verified.'
           : existingByEmail.approvalStatus === 'REJECTED'
           ? 'Your registration request was not approved. Please contact an administrator.'
-          : 'An account with this email already exists. A sign-in link has been sent to your registered email.',
+          : 'An account with this email already exists. Please log in with your email and password.',
         data: { user: existingByEmail }
       });
     }
@@ -133,6 +143,30 @@ router.post('/signup', validateBody(signupSchema), async (req, res) => {
     // -----------------------------------------------------------------------
     const approvalStatus = shouldAutoApprove ? 'APPROVED' : 'PENDING';
 
+    if (!supabaseAdmin) {
+      return res.status(500).json({
+        success: false,
+        error: 'Server configuration error: Supabase admin client not available.'
+      });
+    }
+
+    // Create Supabase Auth user with email+password (email auto-confirmed for auto-approved,
+    // otherwise we don't confirm until admin approves)
+    const { data: sbData, error: sbErr } = await supabaseAdmin.auth.admin.createUser({
+      email,
+      password,
+      email_confirm: shouldAutoApprove,
+      user_metadata: { name }
+    });
+
+    if (sbErr) {
+      console.error('Supabase createUser error:', sbErr);
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to create authentication account. Please try again.'
+      });
+    }
+
     const user = await prisma.user.create({
       data: {
         email,
@@ -140,6 +174,8 @@ router.post('/signup', validateBody(signupSchema), async (req, res) => {
         phone,
         rollNumber,
         department,
+        hall,
+        supabaseUserId: sbData.user?.id ?? null,
         isAdmin: shouldAutoApprove,
         isBlocked: false,
         approvalStatus
@@ -168,8 +204,8 @@ router.post('/signup', validateBody(signupSchema), async (req, res) => {
       needsAdminApproval,
       approvalStatus: user.approvalStatus,
       message: needsAdminApproval
-        ? 'Your registration details have been received. Admins have been notified. Once your account is approved by an admin, a secure sign-in link will be sent to your registered email.'
-        : 'Registration successful. A sign-in link has been sent to your email.',
+        ? 'Your registration details have been received. Admins have been notified. Once approved, you will receive an email and can log in with your password.'
+        : 'Registration successful. You can now log in with your email and password.',
       data: { user }
     });
   } catch (error) {
@@ -373,46 +409,36 @@ router.post(
       const approvalDuration = Date.now() - startTime;
       console.log(`[Approve] User ${target.email} approved in ${approvalDuration}ms`);
 
-      // Send magic link asynchronously (fire-and-forget)
-      // This doesn't block the approval response
-      const sendMagicLink = async () => {
+      // Confirm the Supabase user's email so they can now sign in with password
+      if (target.supabaseUserId) {
         try {
-          const client = (supabaseAdmin as any) || (require('../config/supabaseClient').supabase as any);
-          const redirectTo = `${FRONTEND_URL}${CALLBACK_PATH}`;
-          const { error: sbErr } = await client.auth.signInWithOtp({
-            email: target.email,
-            options: { emailRedirectTo: redirectTo, shouldCreateUser: true }
+          await supabaseAdmin.auth.admin.updateUserById(target.supabaseUserId, {
+            email_confirm: true
           });
-
-          if (sbErr) {
-            console.error(`[Approve] Supabase send OTP failed for ${target.email}:`, sbErr);
-            
-            // Handle rate limit specifically
-            if (sbErr.message?.includes('rate limit') || sbErr.message?.includes('429') || sbErr.message?.includes('over_email_send_rate_limit')) {
-              console.warn(`[Approve] Rate limited sending magic link to ${target.email}. Admin can resend later.`);
-              // Could emit event for admin notification here
-              return;
-            }
-            console.error(`[Approve] Failed to send magic link to ${target.email}:`, sbErr.message);
-          } else {
-            console.log(`[Approve] Magic link sent successfully to ${target.email}`);
-          }
+          console.log(`[Approve] Supabase email confirmed for ${target.email}`);
         } catch (err) {
-          console.error(`[Approve] Unexpected error sending magic link to ${target.email}:`, err);
+          console.error(`[Approve] Failed to confirm Supabase email for ${target.email}:`, err);
         }
-      };
+      }
 
-      // Fire and forget - don't await
-      sendMagicLink();
+      // Send approval notification email (fire-and-forget)
+      setImmediate(async () => {
+        try {
+          await sendApprovalNotification(target.email, target.name, `${FRONTEND_URL}/login`);
+          console.log(`[Approve] Approval notification sent to ${target.email}`);
+        } catch (err) {
+          console.error(`[Approve] Failed to send approval notification to ${target.email}:`, err);
+        }
+      });
 
       res.json({
         success: true,
         data: {
           approvalStatus: 'APPROVED',
-          emailStatus: 'sending', // Will be "sent" or "rate_limited" or "failed" - async
+          emailStatus: 'sending',
           user: { id: updatedUser.id, email: updatedUser.email, name: updatedUser.name }
         },
-        message: `${target.name} has been approved. Sign-in link is being sent to ${target.email}.`
+        message: `${target.name} has been approved. They can now log in with their email and password.`
       });
     } catch (error) {
       console.error('Approve user error:', error);

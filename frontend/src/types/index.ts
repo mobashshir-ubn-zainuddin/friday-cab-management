@@ -9,6 +9,7 @@ export interface User {
   phone?: string;
   rollNumber?: string;
   department?: string;
+  hall?: string;
   isAdmin: boolean;
   isBlocked?: boolean;
   approvalStatus?: UserApprovalStatus;

@@ -12,6 +12,7 @@ const updateUserSchema = z.object({
   name: z.string().min(2).optional(),
   phone: z.string().regex(/^[0-9]{10}$/).optional(),
   department: z.string().optional(),
+  hall: z.string().optional(),
   rollNumber: z.string().optional()
 });
 
@@ -132,6 +133,7 @@ router.get('/profile', authenticate, async (req: AuthenticatedRequest, res) => {
         phone: true,
         rollNumber: true,
         department: true,
+        hall: true,
         isAdmin: true,
         createdAt: true
       }
@@ -160,7 +162,7 @@ router.get('/profile', authenticate, async (req: AuthenticatedRequest, res) => {
 // Update user profile
 router.patch('/profile', authenticate, validateBody(updateUserSchema), async (req: AuthenticatedRequest, res) => {
   try {
-    const { name, phone, department, rollNumber } = req.body;
+    const { name, phone, department, hall, rollNumber } = req.body;
 
     // Check if roll number already exists if provided
     if (rollNumber) {
@@ -185,6 +187,7 @@ router.patch('/profile', authenticate, validateBody(updateUserSchema), async (re
         ...(name && { name }),
         ...(phone && { phone }),
         ...(department && { department }),
+        ...(hall && { hall }),
         ...(rollNumber && { rollNumber: rollNumber.trim() })
       },
       select: {
@@ -194,6 +197,7 @@ router.patch('/profile', authenticate, validateBody(updateUserSchema), async (re
         phone: true,
         rollNumber: true,
         department: true,
+        hall: true,
         isAdmin: true,
         updatedAt: true
       }
@@ -242,6 +246,7 @@ router.get('/', authenticate, authorizeAdmin, async (req: AuthenticatedRequest, 
           phone: true,
           rollNumber: true,
           department: true,
+          hall: true,
           isAdmin: true,
           isBlocked: true,
           approvalStatus: true,

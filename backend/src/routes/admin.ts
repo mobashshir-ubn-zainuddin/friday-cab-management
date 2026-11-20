@@ -26,78 +26,34 @@ const assignCabSchema = z.object({
 // Get admin dashboard stats
 router.get('/dashboard', authenticate, authorizeAdmin, async (req: AuthenticatedRequest, res) => {
   try {
-    const today = istNowStartOfDay();
-    const monthStart = istNowStartOfMonth();
-    const now = new Date();
+    // Timestamp columns hold naive UTC values, so compare against naive UTC literals.
+    const today = istNowStartOfDay().toISOString();
+    const monthStart = istNowStartOfMonth().toISOString();
+    const now = new Date().toISOString();
 
-    const [
-      totalUsers,
-      totalBookings,
-      totalRevenue,
-      activeTrips,
-      pendingPayments,
-      todayBookings,
-      totalTrips,
-      monthlyRevenue
-    ] = await Promise.all([
-      // Total users
-      prisma.user.count(),
-      
-      // Total bookings
-      prisma.booking.count(),
-      
-      // Total revenue (completed payments)
-      prisma.payment.aggregate({
-        where: { status: 'COMPLETED' },
-        _sum: { amount: true }
-      }),
-      
-      // Active trips: not cancelled, not completed (departure in future or no return time but departure in future)
-      prisma.trip.count({
-        where: {
-          status: { not: 'CANCELLED' },
-          departureTime: { gte: now }
-        }
-      }),
-      
-      // Pending payments (include PROCESSING - Razorpay order created but payment not completed)
-      prisma.payment.count({
-        where: { status: { in: ['PENDING', 'PROCESSING'] } }
-      }),
-      
-      // Today's bookings
-      prisma.booking.count({
-        where: {
-          createdAt: { gte: today }
-        }
-      }),
-
-      // Total trips
-      prisma.trip.count(),
-
-      // Monthly revenue (IST-aware month boundary)
-      prisma.payment.aggregate({
-        where: {
-          status: 'COMPLETED',
-          paidAt: {
-            gte: monthStart
-          }
-        },
-        _sum: { amount: true }
-      })
-    ]);
+    const [row] = await prisma.$queryRaw<any[]>`
+      SELECT
+        (SELECT COUNT(*) FROM "User") AS "totalUsers",
+        (SELECT COUNT(*) FROM "Booking") AS "totalBookings",
+        (SELECT COALESCE(SUM(amount), 0) FROM "Payment" WHERE status = 'COMPLETED') AS "totalRevenue",
+        (SELECT COUNT(*) FROM "Trip" WHERE status <> 'CANCELLED' AND "departureTime" >= ${now}::timestamp) AS "activeTrips",
+        (SELECT COUNT(*) FROM "Payment" WHERE status IN ('PENDING', 'PROCESSING')) AS "pendingPayments",
+        (SELECT COUNT(*) FROM "Booking" WHERE "createdAt" >= ${today}::timestamp) AS "todayBookings",
+        (SELECT COUNT(*) FROM "Trip") AS "totalTrips",
+        (SELECT COALESCE(SUM(amount), 0) FROM "Payment" WHERE status = 'COMPLETED' AND "paidAt" >= ${monthStart}::timestamp) AS "monthlyRevenue"
+    `;
 
     res.json({
       success: true,
       data: {
-        totalUsers,
-        totalBookings,
-        totalRevenue: totalRevenue._sum.amount || 0,
-        activeTrips,
-        pendingPayments,
-        todayBookings,
-        totalTrips,
-        monthlyRevenue: monthlyRevenue._sum.amount || 0
+        totalUsers: Number(row.totalUsers),
+        totalBookings: Number(row.totalBookings),
+        totalRevenue: Number(row.totalRevenue),
+        activeTrips: Number(row.activeTrips),
+        pendingPayments: Number(row.pendingPayments),
+        todayBookings: Number(row.todayBookings),
+        totalTrips: Number(row.totalTrips),
+        monthlyRevenue: Number(row.monthlyRevenue)
       }
     });
   } catch (error) {

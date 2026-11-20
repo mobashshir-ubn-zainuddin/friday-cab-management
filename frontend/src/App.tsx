@@ -32,7 +32,7 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode; adminOnly?: boolean 
 }) => {
   const { isAuthenticated, isAdmin, isLoading } = useAuth();
 
-  if (isLoading) {
+  if (isLoading && !isAuthenticated) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-950">
         <div className="text-center">

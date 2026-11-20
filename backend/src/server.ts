@@ -119,6 +119,7 @@ app.use('/api/trips', tripRoutes);
 app.use('/api/bookings', bookingRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/analytics', analyticsRoutes);
 
 app.get("/healthz", (req, res) => {
   res.status(200).json({
@@ -146,6 +147,10 @@ process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 // Server startup
 const server = app.listen(PORT, () => {
+  // Open pool connections up front: each new TLS connection to the DB costs several round trips.
+  Promise.all(Array.from({ length: 5 }, () => prisma.$queryRaw`SELECT 1`)).catch((err) =>
+    console.error('[DB] Warm-up failed:', err?.message || err)
+  );
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`📍 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`🔗 Frontend URL: ${FRONTEND_URL}`);

@@ -142,6 +142,9 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       if (event === 'SIGNED_IN' && session) {
         // Store token BEFORE any API call so the interceptor can attach it
         setCurrentToken(session.access_token);
+        // supabase-js re-emits SIGNED_IN when the tab regains focus; don't
+        // treat that as a new login (it would unmount the page and refetch everything).
+        if (lastSyncedUserId.current === session.user.id) return;
         // Signal loading so ProtectedRoute shows a spinner while we sync
         setIsLoading(true);
         const gen = ++syncGeneration.current;

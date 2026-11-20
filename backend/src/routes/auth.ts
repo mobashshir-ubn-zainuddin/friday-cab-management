@@ -252,18 +252,10 @@ router.post('/sync-user', verifySupabaseUser, async (req: AuthenticatedRequest, 
       });
     }
 
-    // Check pending payments (lightweight count query)
-    const pendingPayments = await prisma.payment.count({
-      where: {
-        userId: dbUser.id,
-        status: { in: ['PENDING', 'FAILED'] }
-      }
-    });
-
-    // Construct response from cached user data + pending payments
+    // hasPendingPayments comes from the auth middleware's single user query
     const serializable = {
       ...dbUser,
-      hasPendingPayments: pendingPayments > 0,
+      hasPendingPayments: !!dbUser.hasPendingPayments,
       updatedAt: dbUser.updatedAt
     };
 
@@ -313,18 +305,10 @@ router.get('/me', verifySupabaseUser, async (req: AuthenticatedRequest, res) => 
       });
     }
 
-    // Check pending payments (lightweight count query)
-    const pendingPayments = await prisma.payment.count({
-      where: {
-        userId: dbUser.id,
-        status: { in: ['PENDING', 'FAILED'] }
-      }
-    });
-
-    // Construct response from cached user data + pending payments
+    // hasPendingPayments comes from the auth middleware's single user query
     const userResponse = {
       ...dbUser,
-      hasPendingPayments: pendingPayments > 0
+      hasPendingPayments: !!dbUser.hasPendingPayments
     };
 
     res.json({

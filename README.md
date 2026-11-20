@@ -345,7 +345,7 @@ Retries and double clicks must not repeat a write.
 
 | Layer | What | Lifetime | Invalidated by |
 |---|---|---|---|
-| Backend user cache | Token → user record | 5 min | Approve, reject, block, admin change |
+| Backend user cache | Token → user record (incl. pending-payment flag) | 5 min | Approve, reject, block, admin change |
 | Backend idempotency store | Response per caller + key | 24 h | Expiry |
 | Frontend GET cache | API GET responses | 15 s | Any write request, login token change |
 | Frontend in-flight dedup | Identical GETs already in progress share one request | Until response | Any write, token change |
@@ -361,6 +361,7 @@ Retries and double clicks must not repeat a write.
   - list endpoints run their count and page queries in parallel;
   - `relationJoins` loads a list and its related rows in one statement.
 - **Local token verification.** Login tokens are checked against Supabase's cached public key in about 1 ms instead of a 300–1,000 ms network call per new token.
+- **One round trip for the login sync.** The auth middleware fetches the user and their pending-payment flag in a single query, so `/auth/sync-user` and `/auth/me` make one database call instead of two.
 - **No work on the hot path.** Trip statuses are computed on read and persisted by the background job, not rescanned on every request.
 - **Frontend.** A short GET cache, in-flight request sharing, and no reload when switching browser tabs.
 
@@ -487,8 +488,8 @@ Never commit `.env` files; they contain the database password and service-role k
 
 ## Deployment notes
 
-- **Same region.** Host the backend in the same region as the Supabase database. Every query pays one network round trip, which is ~1–3 ms in the same region versus ~285 ms from India to a US database.
-- **IPv6.** If the host cannot reach the direct database host (IPv6-only on some Supabase plans), use Supabase's **Session pooler** URL. Do not use the transaction pooler with `pgbouncer=true`.
+- **Region is the single biggest performance factor.** The Supabase database is in **Mumbai** (`ap-south-1`). Host the backend as close to it as possible — on Render that is **Singapore**. A backend in Oregon/US West puts ~800 ms of Pacific round trip on *every* query; Singapore brings that to roughly 60–90 ms.
+- **IPv6.** The direct host (`db.<ref>.supabase.co`) resolves to IPv6 only. If the platform cannot reach it, use Supabase's **Session pooler** URL (port 5432). Do not use the transaction pooler with `pgbouncer=true`.
 - **Razorpay webhook.** Point it at `https://<backend>/api/payments/webhook` with the same secret as `RAZORPAY_WEBHOOK_SECRET`.
 - **Build.** Run `npm run build` before `npm start`; `start` runs the compiled `dist/server.js`.
 

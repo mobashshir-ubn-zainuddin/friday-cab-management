@@ -80,9 +80,19 @@ export const verifySupabaseUser = async (
       dbUser = getCachedUser(emailCacheKey) as User;
 
       if (!dbUser) {
-        dbUser = await prisma.user.findUnique({
-          where: { email: email }
-        });
+        // Fetch the user and their pending-payment flag in one round trip; routes
+        // that need the flag read it from here instead of issuing a second query.
+        const [row] = await prisma.$queryRaw<any[]>`
+          SELECT u.*,
+            EXISTS (
+              SELECT 1 FROM "Payment" p
+              WHERE p."userId" = u.id AND p.status IN ('PENDING', 'FAILED')
+            ) AS "hasPendingPayments"
+          FROM "User" u
+          WHERE u.email = ${email}
+          LIMIT 1
+        `;
+        dbUser = row as User;
 
         if (!dbUser) {
           // No account in our DB — reject. Users must register first.

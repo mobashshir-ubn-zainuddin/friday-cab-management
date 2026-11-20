@@ -65,9 +65,8 @@ router.get('/', authenticate, authorizeAdmin, async (req: AuthenticatedRequest, 
     const startDate = istMonthStart(targetYear, targetMonth);
     const endDate = istMonthEnd(targetYear, targetMonth);
 
-    // Get daily breakdown using database aggregation instead of in-memory filtering
-    const dailyStatsQueryStart = process.hrtime.bigint();
-    const dailyStatsRaw = await prisma.$queryRaw<Array<{ date: Date; trips: bigint; bookings: bigint; revenue: number }>>`
+    const queryStart = process.hrtime.bigint();
+    const dailyStatsPromise = prisma.$queryRaw<Array<{ date: Date; trips: bigint; bookings: bigint; revenue: number }>>`
       SELECT 
         DATE(t.date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata') as date,
         COUNT(DISTINCT t.id)::bigint as trips,
@@ -80,11 +79,9 @@ router.get('/', authenticate, authorizeAdmin, async (req: AuthenticatedRequest, 
       GROUP BY DATE(t.date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata')
       ORDER BY date
     `;
-    const dailyStatsQueryMs = Number(process.hrtime.bigint() - dailyStatsQueryStart) / 1_000_000;
 
-    // Get summary metrics using parallel queries
-    const summaryQueryStart = process.hrtime.bigint();
     const [
+      dailyStatsRaw,
       totalTrips,
       totalBookings,
       totalRevenue,
@@ -92,6 +89,7 @@ router.get('/', authenticate, authorizeAdmin, async (req: AuthenticatedRequest, 
       vehicleDistribution,
       paymentStatusDistribution
     ] = await Promise.all([
+      dailyStatsPromise,
       prisma.trip.count({
         where: { date: { gte: startDate, lte: endDate } }
       }),
@@ -123,7 +121,7 @@ router.get('/', authenticate, authorizeAdmin, async (req: AuthenticatedRequest, 
         _sum: { amount: true }
       })
     ]);
-    const summaryQueryMs = Number(process.hrtime.bigint() - summaryQueryStart) / 1_000_000;
+    const queryMs = Number(process.hrtime.bigint() - queryStart) / 1_000_000;
 
     const totalRevenueAmount = totalRevenue._sum.amount || 0;
     const totalExpensesAmount = totalExpenses._sum.totalCost || 0;
@@ -167,7 +165,7 @@ router.get('/', authenticate, authorizeAdmin, async (req: AuthenticatedRequest, 
 
     const totalMs = Number(process.hrtime.bigint() - overallStart) / 1_000_000;
     if (totalMs > 500) {
-      console.log(`[Analytics GET /] Request ${requestId} - Total: ${totalMs.toFixed(2)}ms, DailyStats: ${dailyStatsQueryMs.toFixed(2)}ms, Summary: ${summaryQueryMs.toFixed(2)}ms`);
+      console.log(`[Analytics GET /] Request ${requestId} - Total: ${totalMs.toFixed(2)}ms, Queries: ${queryMs.toFixed(2)}ms`);
     }
 
     res.json({

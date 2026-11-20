@@ -7,7 +7,15 @@ import type { ApiResponse, ApproveUserResponse, RejectUserResponse, BlockUserRes
 // from inside an onAuthStateChange callback (where the API interceptor is invoked
 // during checkAndSyncUser) re-enters Supabase's internal lock and can deadlock.
 let _currentToken: string | null = null;
+
+// Short-lived GET cache so revisiting a page doesn't wait on a DB round trip.
+// Cleared on any mutation and whenever the signed-in token changes.
+const GET_CACHE_TTL_MS = 15_000;
+const getCache = new Map<string, { data: unknown; expiresAt: number }>();
+export const clearApiCache = (): void => getCache.clear();
+
 export const setCurrentToken = (token: string | null): void => {
+  if (token !== _currentToken) getCache.clear();
   _currentToken = token;
 };
 
@@ -80,6 +88,7 @@ api.interceptors.request.use(
 // Response interceptor for error handling + cache management
 api.interceptors.response.use(
   (response) => {
+    if (response.config.method?.toLowerCase() !== 'get') getCache.clear();
     // Clean up pending request cache
     const key = getRequestKey(response.config);
     if (key) {
@@ -90,6 +99,7 @@ api.interceptors.response.use(
   (error: AxiosError<ApiResponse>) => {
     // Clean up pending request cache on error
     if (error.config) {
+      if (error.config.method?.toLowerCase() !== 'get') getCache.clear();
       const key = getRequestKey(error.config);
       if (key) {
         pendingRequests.delete(key);
@@ -156,10 +166,15 @@ const generateIdempotencyKey = (prefix: string): string => {
 // Generic API methods
 export const apiClient = {
   get: async <T>(url: string, config?: AxiosRequestConfig): Promise<T> => {
+    const cacheKey = `${url}?${JSON.stringify(config?.params ?? {})}`;
+    const cached = getCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) return cached.data as T;
+
     const response = await api.get<ApiResponse<T>>(url, config);
     if (!response.data.success) {
       throw new Error(response.data.error || 'Request failed');
     }
+    getCache.set(cacheKey, { data: response.data.data, expiresAt: Date.now() + GET_CACHE_TTL_MS });
     return response.data.data as T;
   },
 

@@ -1,1069 +1,500 @@
-# Cab Management System
+# Friday Cab Management System
 
-A production-oriented full-stack cab booking and management platform designed for IIT Kharagpur students.
+A full-stack cab booking platform for IIT Kharagpur students. It covers the whole trip lifecycle: trip creation, student booking, cab allocation, attendance, post-trip cost sharing and online payment, plus an admin panel for users and analytics.
 
-The system manages the complete lifecycle of prayer cab trips — from trip creation and student booking to cab allocation, attendance, post-trip payment collection, email notifications, and administrative analytics.
-
-The application is designed with a strong focus on:
-
-- API performance
-- Security
-- Authentication
-- Persistent state management
-- Idempotent operations
-- Concurrent request handling
-- Database consistency
-- Secure payment processing
-- Reliable email notifications
-- Role-based access control
+> **Business rule:** students do not pay when booking. After the trip, the admin enters the total cost, it is split equally among the riders, and each rider pays their share online.
 
 ---
 
-# Table of Contents
+## Table of contents
 
-- [Overview](#overview)
-- [Key Engineering Improvements](#key-engineering-improvements)
-- [Technology Stack](#technology-stack)
-- [High-Level System Architecture](#high-level-system-architecture)
-- [Performance Optimization](#performance-optimization)
-- [Persistence Architecture](#persistence-architecture)
+- [Features](#features)
+- [Technology stack](#technology-stack)
+- [System architecture](#system-architecture)
+- [Request lifecycle (backend middleware)](#request-lifecycle-backend-middleware)
+- [Registration and admin approval](#registration-and-admin-approval)
+- [Login and token verification](#login-and-token-verification)
+- [Trip creation and trip lifecycle](#trip-creation-and-trip-lifecycle)
+- [Booking and cancellation](#booking-and-cancellation)
+- [Cab allocation and attendance](#cab-allocation-and-attendance)
+- [Cost sharing and payment](#cost-sharing-and-payment)
 - [Idempotency](#idempotency)
-- [Authentication and Security Architecture](#authentication-and-security-architecture)
-- [PKCE Authentication](#pkce-authentication)
-- [Registration Flow](#registration-flow)
-- [Login Flow](#login-flow)
-- [Trip Creation Workflow](#trip-creation-workflow)
-- [Email Notification Workflow](#email-notification-workflow)
-- [Trip Booking Workflow](#trip-booking-workflow)
-- [Cab Allocation Workflow](#cab-allocation-workflow)
-- [Post-Trip Payment Workflow](#post-trip-payment-workflow)
-- [Database and Data Integrity](#database-and-data-integrity)
-- [API Request Lifecycle](#api-request-lifecycle)
-- [Security Architecture](#security-architecture)
-- [Error Handling](#error-handling)
-- [Project Structure](#project-structure)
-- [Deployment Architecture](#deployment-architecture)
-- [Engineering Highlights](#engineering-highlights)
-- [Future Improvements](#future-improvements)
+- [Caching](#caching)
+- [Performance design](#performance-design)
+- [Data model](#data-model)
+- [Project structure](#project-structure)
+- [Running locally](#running-locally)
+- [Environment variables](#environment-variables)
+- [Deployment notes](#deployment-notes)
+- [Known limitations](#known-limitations)
 
 ---
 
-# Overview
+## Features
 
-The Cab Management System provides two primary interfaces:
+**Students**
+- Register with institute email (`@kgpian.iitkgp.ac.in`), phone, roll number, department, hall of residence and password
+- Log in with email and password once an admin has approved the account
+- Browse trips, book during the booking window, cancel before the cancellation deadline
+- See cab assignment, booking history and dashboard stats
+- Pay their share of the trip cost through Razorpay (cards, UPI, QR)
 
-### Student/User Portal
-
-Students can:
-
-- Browse available trips
-- Book available trips
-- View booking status
-- Track cab assignments
-- View attendance/payment status
-- Complete post-trip payments
-
-### Admin Panel
-
-Administrators can:
-
-- Create and manage trips
-- Configure booking windows
-- Allocate vehicles
-- Manage bookings
-- Record attendance
-- Open/close payment windows
-- Configure trip costs
-- Manage users
-- Manage administrator privileges
-- Monitor revenue and analytics
-
-A major business requirement is that:
-
-> **Students do not pay during booking. Payment is collected after the trip has been completed.**
+**Admins**
+- Approve or reject registrations; block users; grant or revoke admin rights
+- Create, edit, cancel and delete trips; every active user is emailed about a new trip
+- Add cabs to a trip and assign riders automatically or by hand
+- Mark attendance, open the payment window with the total cost, track pending payments
+- View analytics: monthly summary, daily breakdown, profit/loss, per-user stats
 
 ---
 
-# Key Engineering Improvements
+## Technology stack
 
-The system has undergone significant backend and infrastructure improvements focused on performance, reliability, security, and consistency.
-
-### Major improvements
-
-- Reduced API latency through optimized database access
-- Parallelized independent database operations
-- Reduced unnecessary sequential API requests
-- Reduced redundant database queries
-- Eliminated unnecessary database connection-pooling overhead
-- Added persistent database-backed application state
-- Implemented idempotent state-changing operations
-- Added PKCE-based authentication
-- Added authentication and authorization checks
-- Added role-based administrative access
-- Added API-level input validation
-- Added rate limiting
-- Added HTTP security headers
-- Added structured error handling
-- Added database-level integrity protection
-- Improved concurrent request handling
-- Added reliable email notification workflows
-- Improved production reliability of PostgreSQL/Supabase-backed operations
-
----
-
-# Technology Stack
-
-## Frontend
-
-| Technology | Purpose |
+| Layer | Technology |
 |---|---|
-| React | UI framework |
-| TypeScript | Type safety |
-| Vite | Frontend build tooling |
-| Tailwind CSS | Styling |
-| shadcn/ui | UI components |
-| React Router DOM | Client-side routing |
-| Axios | HTTP/API communication |
-
-## Backend
-
-| Technology | Purpose |
-|---|---|
-| Node.js | Runtime |
-| Express.js | REST API framework |
-| TypeScript | Backend type safety |
-| Prisma ORM | Database access |
-| PostgreSQL | Persistent relational database |
-| Zod | Request/input validation |
-| Passport.js | Authentication middleware |
-| Helmet | HTTP security headers |
-| Rate Limiting | API abuse protection |
-
-## Authentication
-
-- PKCE
-- JWT/session-based authentication
-- Authentication middleware
-- Role-based authorization
-- Protected administrative routes
-
-## External Services
-
-| Service | Purpose |
-|---|---|
-| Supabase/PostgreSQL | Persistent database/authentication infrastructure |
-| Razorpay | Payment processing |
-| Nodemailer | Email notifications |
+| Frontend | React, TypeScript, Vite, Tailwind CSS, shadcn/ui, React Router, Axios |
+| Backend | Node.js, Express, TypeScript, Zod validation, Helmet, express-rate-limit |
+| Database | PostgreSQL on Supabase, accessed through Prisma ORM (`relationJoins` enabled) |
+| Authentication | Supabase Auth (email + password), verified by the backend on every request |
+| Payments | Razorpay Orders API, Checkout, signature verification and webhooks |
+| Email | Resend (trip announcements, admin notifications, approval emails) |
 
 ---
 
-# High-Level System Architecture
-1. High-Level System Architecture
+## System architecture
+
 ```mermaid
 flowchart TB
-    User["Student / User"]
-    Admin["Administrator"]
+    Student["Student"] --> UI
+    Admin["Admin"] --> UI
 
-    subgraph Frontend["Frontend - React + TypeScript + Vite"]
-        UI["React UI"]
-        Router["React Router"]
-        Axios["Axios API Client"]
-        State["Persistent Client State"]
+    subgraph FE["Frontend (React + Vite)"]
+        UI["Pages: Dashboard, Trips, Bookings, Payments, Admin panel"]
+        AuthCtx["AuthContext<br/>(session + user sync)"]
+        ApiClient["API client (Axios)<br/>15 s GET cache, in-flight dedup"]
+        SBClient["Supabase JS client<br/>(session in sessionStorage)"]
+        UI --> AuthCtx --> SBClient
+        UI --> ApiClient
     end
 
-    subgraph Backend["Backend - Node.js + Express + TypeScript"]
-        API["REST API"]
-        Auth["Authentication Middleware"]
-        Validation["Zod Validation"]
-        RateLimit["Rate Limiting"]
-        Security["Helmet + CORS"]
-        Controllers["Controllers"]
-        Services["Business Logic Services"]
-        Idempotency["Idempotency Layer"]
+    subgraph BE["Backend (Express)"]
+        MW["Helmet, CORS, rate limit,<br/>JSON parser, idempotency"]
+        AuthMW["authenticate / verifySupabaseUser<br/>(5-min user cache)"]
+        Routes["Routes: auth, users, trips, bookings,<br/>payments, admin, analytics"]
+        Webhook["/api/payments/webhook<br/>(raw body, HMAC check)"]
+        Job["Background job:<br/>trip status sync every 60 s"]
+        MW --> AuthMW --> Routes
     end
 
-    subgraph Database["PostgreSQL / Supabase"]
-        DB["PostgreSQL Database"]
-        Users["User"]
-        Trips["Trip"]
-        Bookings["Booking"]
-        Cabs["Cab"]
-        Assignments["CabAssignment"]
-        Payments["Payment"]
+    subgraph EXT["External services"]
+        SBAuth["Supabase Auth"]
+        PG[("PostgreSQL<br/>(Supabase)")]
+        RZP["Razorpay"]
+        Resend["Resend email"]
     end
 
-    subgraph External["External Services"]
-        SupabaseAuth["Supabase Auth"]
-        Razorpay["Razorpay"]
-        Email["Nodemailer / SMTP"]
-    end
-
-    User --> UI
-    Admin --> UI
-
-    UI --> Router
-    Router --> Axios
-    Axios --> API
-
-    API --> Security
-    Security --> RateLimit
-    RateLimit --> Auth
-    Auth --> Validation
-    Validation --> Controllers
-    Controllers --> Services
-    Services --> Idempotency
-
-    Idempotency --> DB
-    Services --> DB
-
-    Auth --> SupabaseAuth
-    Services --> Razorpay
-    Services --> Email
-
-    DB --> Users
-    DB --> Trips
-    DB --> Bookings
-    DB --> Cabs
-    DB --> Assignments
-    DB --> Payments
-
-    State -.-> UI
+    SBClient -- "signInWithPassword" --> SBAuth
+    ApiClient -- "Bearer access token" --> MW
+    AuthMW -- "getUser(token)" --> SBAuth
+    Routes -- "Prisma" --> PG
+    Job --> PG
+    Routes -- "create order, fetch payments" --> RZP
+    RZP -- "payment events" --> Webhook --> PG
+    Routes -- "notifications" --> Resend
+    UI -- "Checkout widget" --> RZP
 ```
 
-Authentication Architecture — PKCE(Proof Key for Code Exchange) to protect the authorization flow and prevent authorization-code interception attacks.
+**How the pieces fit together**
+1. The browser logs in directly with Supabase Auth and receives an access token.
+2. Every API call to the Express backend carries that token in the `Authorization` header.
+3. The backend verifies the token with Supabase, loads the matching user from PostgreSQL, and checks approval, block and admin status before running the route.
+4. All business data (users, trips, bookings, cabs, payments) lives in PostgreSQL. The frontend never writes to the database directly.
+5. Razorpay handles card/UPI payments. The backend creates orders and verifies every payment server-side, by signature, webhook or direct status query.
+
+---
+
+## Request lifecycle (backend middleware)
+
+Middleware runs in this order (`backend/src/server.ts`):
+
+1. **Helmet**: security headers.
+2. **CORS**: in production only `FRONTEND_URL` is allowed.
+3. **Razorpay webhook** (`/api/payments/webhook`): mounted *before* the JSON parser so it receives the raw body needed for HMAC verification.
+4. **Rate limit**: 100 requests per IP per 15 minutes on `/api/*`.
+5. **Body parsing, cookies, request logging and timing.**
+6. **Idempotency** for POST/PATCH/PUT/DELETE requests that send an `Idempotency-Key` (see [Idempotency](#idempotency)).
+7. **Route-level middleware**: `authenticate` → optional `authorizeAdmin`, `checkBlockedStatus`, `checkPendingPayments` → Zod `validateBody` → handler.
+
+---
+
+## Registration and admin approval
+
 ```mermaid
 sequenceDiagram
     autonumber
-
-    actor User
-    participant Browser as React Frontend
-    participant Auth as Supabase Auth
-    participant API as Express Backend
+    actor S as Student
+    participant FE as Frontend
+    participant API as Backend
+    participant SA as Supabase Auth
     participant DB as PostgreSQL
+    participant M as Resend
+    actor A as Admin
 
-    User->>Browser: Enter email/password
-    Browser->>Browser: Generate code_verifier
-    Browser->>Browser: Generate code_challenge
+    S->>FE: Fill form (name, email prefix, phone, roll no., department, hall, password x2)
+    FE->>FE: Check all fields, passwords match, length >= 6
+    FE->>API: POST /api/auth/signup
+    API->>API: Zod validation, build email prefix@kgpian.iitkgp.ac.in
+    API->>DB: Email already registered? Roll number taken?
+    API->>SA: admin.createUser(email, password, email_confirm = false)
+    API->>DB: Create User (approvalStatus PENDING, supabaseUserId)
+    API--)M: Email all admins with the registration details
+    API-->>FE: needsAdminApproval = true
+    FE-->>S: "Verification pending" screen
 
-    Browser->>Auth: Authentication request + PKCE challenge
-    Auth->>Auth: Validate credentials
-
-    Auth-->>Browser: Authorization code
-    Browser->>Auth: Exchange code + code_verifier
-
-    Auth-->>Browser: Access Token + Refresh Token
-
-    Browser->>API: API request + Access Token
-    API->>Auth: Validate token
-
-    Auth-->>API: Valid user identity
-
-    API->>DB: Fetch user/application data
-    DB-->>API: User data
-
-    API-->>Browser: Authenticated response
-    Browser-->>User: Logged-in application
+    A->>API: POST /api/auth/admin/users/:id/approve
+    API->>DB: approvalStatus = APPROVED, clear cached user
+    API->>SA: updateUserById(email_confirm = true)
+    API--)M: "Account approved" email with login link
 ```
 
-3. Registration Flow
+Steps:
+1. **Signup** creates the Supabase Auth account *unconfirmed*, so the student cannot log in yet, and a `User` row with status `PENDING`.
+2. **Bootstrap admin:** emails listed in `ADMIN_EMAILS` are created as confirmed admins with status `APPROVED`, so the first admin needs no approval.
+3. **Approve** confirms the Supabase account and emails the student. From then on they can log in with their password.
+4. **Reject** deletes the user from both Supabase Auth and the database.
+5. **Block / grant admin / revoke admin** update the user and clear the server's cached copy, so the change applies on the next request.
+
+---
+
+## Login and token verification
+
 ```mermaid
 sequenceDiagram
     autonumber
-
-    actor User
-    participant Frontend as React Frontend
-    participant API as Express API
-    participant Auth as Supabase Auth
-    participant DB as PostgreSQL
-    participant Email as Email Service
-
-    User->>Frontend: Submit registration form
-
-    Frontend->>Frontend: Client-side validation
-    Frontend->>API: POST /api/auth/register
-
-    API->>API: Rate-limit check
-    API->>API: Zod validation
-
-    API->>Auth: Create authentication account
-    Auth-->>API: Auth user UUID
-
-    API->>DB: Create application User record
-    DB-->>API: User created
-
-    API->>Email: Send verification / welcome email
-    Email-->>User: Registration email
-
-    API-->>Frontend: Registration successful
-    Frontend-->>User: Verify account
-```
-
-4. Login Flow
-```mermaid
-sequenceDiagram
-    autonumber
-
-    actor User
-    participant Frontend as React
-    participant Auth as Supabase Auth
-    participant API as Express
+    actor U as User
+    participant FE as Frontend (AuthContext)
+    participant SA as Supabase Auth
+    participant API as Backend
     participant DB as PostgreSQL
 
-    User->>Frontend: Enter credentials
-
-    Frontend->>Auth: Login using PKCE
-    Auth->>Auth: Verify credentials
-
-    alt Invalid credentials
-        Auth-->>Frontend: Authentication failed
-        Frontend-->>User: Show error
-    else Valid credentials
-        Auth-->>Frontend: Access + Refresh tokens
-
-        Frontend->>API: Authenticated API request
-        API->>Auth: Verify access token
-
-        Auth-->>API: User identity / UUID
-
-        API->>DB: Fetch application user
-        DB-->>API: User profile + role
-
-        API-->>Frontend: User session data
-        Frontend-->>User: Dashboard
+    U->>FE: Email prefix + password
+    FE->>SA: signInWithPassword
+    alt wrong password / not approved
+        SA-->>FE: "Invalid login credentials" / "Email not confirmed"
+        FE-->>U: Error message
+    else success
+        SA-->>FE: Session (access + refresh token), stored in sessionStorage
+        FE->>FE: SIGNED_IN event → store token for API client
+        FE->>API: POST /api/auth/sync-user (Bearer token)
+        API->>API: Token in 5-min cache?
+        API->>SA: getUser(token) (on cache miss)
+        API->>API: Email must end with @kgpian.iitkgp.ac.in
+        API->>DB: Find User by email
+        API->>API: Reject if blocked, PENDING or REJECTED
+        API-->>FE: User profile + hasPendingPayments
+        FE->>FE: Profile email must equal signed-in email, else log out
+        FE-->>U: Dashboard
     end
 ```
 
-5. Trip Creation Workflow
-```mermaid
-sequenceDiagram
-    autonumber
+Key points:
+- **Verification on every request.** `authenticate` (and `verifySupabaseUser` on auth routes) validates the bearer token with Supabase Auth, enforces the institute email domain, loads the database user, and rejects blocked, pending or rejected accounts. The result is cached per token for 5 minutes.
+- **Identity check on the client.** After syncing, the frontend confirms the returned profile belongs to the account that just signed in, and logs out otherwise.
+- **Tab switches are not logins.** supabase-js emits `SIGNED_IN` again when a tab regains focus. If it is for the user already signed in, AuthContext only refreshes the token; it does not re-sync or reload the page.
+- **Session scope.** Sessions live in `sessionStorage`, so closing the browser ends the session and one person's session never carries over to the next user of a shared computer.
+- **Role checks.** `authorizeAdmin` guards every admin route on the server; hiding admin pages in the UI is only cosmetic.
 
-    actor Admin
-    participant UI as Admin Panel
-    participant API as Express API
-    participant Auth as Auth Middleware
-    participant DB as PostgreSQL
-    participant Email as Email Service
+---
 
-    Admin->>UI: Enter trip details
-    UI->>API: POST /api/trips
+## Trip creation and trip lifecycle
 
-    API->>Auth: Verify administrator
-    Auth-->>API: Admin authorized
+**Creating a trip** (`POST /api/trips`, admin only):
+1. Zod checks the fields and their order: booking start < booking end < departure < return, and cancellation deadline before departure.
+2. Times entered in IST are converted to UTC before saving.
+3. The trip is saved with status `UPCOMING` and `currentBookings = 0`.
+4. Every non-blocked user is emailed about the new trip. Emails are sent in the background, so a failed email never blocks or rolls back trip creation.
 
-    API->>API: Validate trip data
+**Trip status** is worked out from the clock, with this precedence:
 
-    API->>DB: Create Trip
-    DB-->>API: Trip created
-
-    API->>Email: Send new-trip notification
-    Email-->>API: Email accepted
-
-    API-->>UI: Trip created successfully
-    UI-->>Admin: Display trip
-```
-
-6. Trip Creation + Email Notification Architecture
-```mermaid
-flowchart TD
-    Admin["Administrator"]
-
-    Create["Create Trip Request"]
-    Validate["Validate Input"]
-    Auth["Verify Admin"]
-    DB["Insert Trip into PostgreSQL"]
-    Commit["Trip Persisted"]
-    EmailQueue["Email Notification"]
-    SMTP["SMTP / Email Provider"]
-    Users["Students"]
-
-    Admin --> Create
-    Create --> Auth
-    Auth --> Validate
-    Validate --> DB
-    DB --> Commit
-
-    Commit --> EmailQueue
-    EmailQueue --> SMTP
-    SMTP --> Users
-
-    Commit --> Response["Return Success Response"]
-
-    EmailQueue -. "Failure does not rollback trip" .-> Error["Log / Retry Email"]
-```
-
-7. User Booking Workflow
-```mermaid
-sequenceDiagram
-    autonumber
-
-    actor Student
-    participant UI as React Frontend
-    participant API as Express API
-    participant Auth as Auth Middleware
-    participant DB as PostgreSQL
-    participant Email as Email Service
-
-    Student->>UI: Select trip
-    UI->>API: POST /api/bookings
-
-    API->>Auth: Verify user token
-    Auth-->>API: User UUID
-
-    API->>API: Validate request
-
-    API->>DB: Check trip availability
-    DB-->>API: Trip details
-
-    API->>DB: Check booking window
-    DB-->>API: Window status
-
-    API->>DB: Check pending payments
-    DB-->>API: Payment status
-
-    API->>DB: Check existing booking
-    DB-->>API: Existing booking status
-
-    alt Booking not allowed
-        API-->>UI: Reject booking
-        UI-->>Student: Display reason
-    else Booking allowed
-        API->>DB: Create Booking
-        DB-->>API: Booking created
-
-        API->>Email: Send booking confirmation
-        Email-->>Student: Confirmation email
-
-        API-->>UI: Booking successful
-        UI-->>Student: Show booking
-    end
-```
-
-8. Idempotent Booking Design
-```mermaid
-flowchart TD
-    Client["Client"]
-
-    Request["POST /api/bookings"]
-    Key["Idempotency-Key"]
-    Check["Check Idempotency Record"]
-
-    Existing{"Request Already Processed?"}
-
-    Return["Return Existing Result"]
-    Validate["Validate Request"]
-    Transaction["Database Transaction"]
-
-    Duplicate{"Existing Booking?"}
-
-    Reject["Reject Duplicate Booking"]
-    Create["Create Booking"]
-    Store["Store Idempotency Result"]
-
-    Client --> Request
-    Request --> Key
-    Key --> Check
-    Check --> Existing
-
-    Existing -->|Yes| Return
-    Existing -->|No| Validate
-
-    Validate --> Transaction
-    Transaction --> Duplicate
-
-    Duplicate -->|Yes| Reject
-    Duplicate -->|No| Create
-
-    Create --> Store
-    Store --> Return
-
-    Return --> Client
-```
-
-
-9. Persistent State Management
-
-The application does not rely solely on temporary frontend state.
-
-Important business state is persisted in PostgreSQL so that it survives:
-
-Browser refresh
-Frontend restart
-Backend restart
-Server redeployment
-Multiple simultaneous clients
-```mermaid
-flowchart LR
-    Browser["Browser State"]
-    API["Backend API"]
-    DB["PostgreSQL"]
-
-    Browser -->|Request| API
-    API -->|Read / Write| DB
-
-    DB -->|Persisted State| API
-    API -->|Current State| Browser
-
-    Restart["Application Restart"] --> API
-    API -->|Recover State| DB
-```
-
-10. Persistent Booking State
 ```mermaid
 stateDiagram-v2
-    [*] --> Pending
-
-    Pending --> Confirmed: Booking successful
-    Pending --> Cancelled: User cancels
-    Pending --> Rejected: Validation failure
-
-    Confirmed --> Attended: Admin marks attendance
-    Confirmed --> NoShow: User absent
-
-    Attended --> PaymentPending: Payment window opened
-    NoShow --> PaymentPending: Applicable payment
-
-    PaymentPending --> Paid: Payment successful
-    PaymentPending --> PaymentFailed: Payment failure
-
-    PaymentFailed --> PaymentPending: Retry payment
-
-    Paid --> Completed
-
-    Cancelled --> [*]
-    Rejected --> [*]
-    Completed --> [*]
+    [*] --> UPCOMING: trip created
+    UPCOMING --> BOOKING_OPEN: bookingStartTime reached
+    BOOKING_OPEN --> BOOKING_CLOSED: bookingEndTime reached
+    BOOKING_OPEN --> CAB_ASSIGNED: cabs have riders
+    BOOKING_CLOSED --> CAB_ASSIGNED: cabs have riders
+    CAB_ASSIGNED --> IN_PROGRESS: departureTime reached
+    BOOKING_CLOSED --> IN_PROGRESS: departureTime reached
+    IN_PROGRESS --> COMPLETED: returnTime reached
+    UPCOMING --> CANCELLED: admin cancels
+    BOOKING_OPEN --> CANCELLED: admin cancels
+    BOOKING_CLOSED --> CANCELLED: admin cancels
 ```
 
-11. Cab Allocation Workflow
-```mermaid
-flowchart TD
-    Start["Trip Booking / Allocation"]
+- `getEffectiveTripStatus()` computes the status from timestamps on every read, so the API never shows a stale status.
+- A background job (`syncTripStatuses`, every 60 s) writes the computed status back to the database for queries that filter on it.
+- **Cancelling a trip** cancels all confirmed bookings and resets `currentBookings` to 0. `CANCELLED` is never overwritten by the clock.
 
-    GetBookings["Fetch Confirmed Bookings"]
-    GetVehicles["Fetch Available Vehicles"]
+---
 
-    Sort["Sort / Group Bookings"]
-    Capacity["Check Vehicle Capacity"]
+## Booking and cancellation
 
-    Full{"Vehicle Full?"}
+**Booking** (`POST /api/bookings`). Checks run in this order and the first failure is returned:
 
-    Next["Move to Next Vehicle"]
-    Assign["Assign Passenger"]
-    Persist["Persist CabAssignment"]
+| # | Check | Response if it fails |
+|---|---|---|
+| 1 | Valid token, approved account | 401 / 403 |
+| 2 | User not blocked (`checkBlockedStatus`) | 403 `USER_BLOCKED` |
+| 3 | No PENDING/FAILED payments (`checkPendingPayments`) | 403 `PENDING_PAYMENTS` |
+| 4 | Trip exists | 404 |
+| 5 | Now is inside the booking window (time-based, not the status field) | 400 "not started" / "closed" |
+| 6 | Trip not cancelled | 400 |
+| 7 | No active booking for this trip; unique `(userId, tripId)` in the database | 409 |
+| 8 | `currentBookings < maxBookings` | 400 "maximum bookings reached" |
 
-    Complete{"All Passengers Assigned?"}
+If all checks pass, a new booking is created as `CONFIRMED`, or a previously cancelled one is reactivated, and the trip's `currentBookings` is incremented.
 
-    End["Allocation Completed"]
+**Cancellation** (`PATCH /api/bookings/:id/cancel`):
+- Allowed only for the booking's owner, before the cancellation deadline (if one is set) and before departure.
+- Sets the booking to `CANCELLED` and decrements `currentBookings`.
 
-    Start --> GetBookings
-    GetBookings --> GetVehicles
-    GetVehicles --> Sort
-    Sort --> Capacity
+---
 
-    Capacity --> Full
+## Cab allocation and attendance
 
-    Full -->|Yes| Next
-    Next --> Capacity
+1. **Add cabs** to a trip: vehicle type (CAB / AUTO / TOTO), number, driver details and capacity.
+2. **Auto-assign** (`POST /api/admin/trips/:tripId/auto-assign`):
+   - Takes confirmed bookings with no cab yet, oldest first.
+   - Fills cabs in the order they were added, one cab completely before the next.
+   - Each assignment gets a seat number and increments the cab's `currentOccupancy`.
+3. **Manual assign / unassign**: checks the cab has space, the booking is confirmed and not already assigned. The database enforces one assignment per booking and unique seats per cab.
+4. **Attendance**: the admin marks each booking `ATTENDED` or `NO_SHOW`, one at a time or in bulk.
 
-    Full -->|No| Assign
-    Assign --> Persist
-    Persist --> Complete
+---
 
-    Complete -->|No| Capacity
-    Complete -->|Yes| End
-```
+## Cost sharing and payment
 
-12. Trip Lifecycle
-
-This gives the complete business lifecycle of a trip.
-```mermaid
-stateDiagram-v2
-    [*] --> Upcoming: Admin creates trip
-
-    Upcoming --> BookingOpen: Booking window opens
-    BookingOpen --> BookingClosed: Booking deadline reached
-
-    BookingClosed --> TripStarted
-    TripStarted --> TripCompleted
-
-    TripCompleted --> AttendanceMarked
-    AttendanceMarked --> PaymentWindowClosed
-
-    PaymentWindowClosed --> PaymentOpen: Admin opens payment
-
-    PaymentOpen --> PaymentProcessing
-    PaymentProcessing --> PaymentCompleted
-
-    PaymentCompleted --> Settled
-    Settled --> [*]
-```
-
-
-13. Payment Workflow
-
-Payment occurs after trip completion, according to the business logic.
 ```mermaid
 sequenceDiagram
     autonumber
-
-    actor Student
-    participant UI as React Frontend
-    participant API as Express API
+    actor A as Admin
+    actor S as Student
+    participant FE as Frontend
+    participant API as Backend
     participant DB as PostgreSQL
-    participant Razorpay as Razorpay
+    participant R as Razorpay
 
-    Admin->>API: Mark trip completed
-    API->>DB: Update trip status
+    A->>API: PATCH /api/trips/:id/payment-window {open, totalCost}
+    API->>DB: Eligible bookings = CONFIRMED or ATTENDED
+    API->>DB: costPerPerson = totalCost / eligible count
+    API->>DB: Create PENDING Payment per booking (skipDuplicates)
 
-    Admin->>API: Mark attendance
-    API->>DB: Store attendance
+    S->>FE: Pay now
+    FE->>API: POST /api/payments/create-order
+    API->>DB: Find PENDING/PROCESSING payment, window must be open
+    API->>R: Create order (or reuse existing order)
+    API->>DB: status = PROCESSING, save razorpayOrderId
+    API-->>FE: orderId, amount (paise), keyId
+    FE->>R: Open Checkout
 
-    Admin->>API: Open payment window
-    API->>DB: Calculate total / attendee share
-    DB-->>API: Payment amount
-
-    API-->>UI: Payment available
-
-    Student->>UI: Click Pay
-    UI->>API: Create payment order
-
-    API->>Razorpay: Create order
-    Razorpay-->>API: Order ID
-
-    API->>DB: Store payment attempt
-    API-->>UI: Razorpay order
-
-    UI->>Razorpay: Complete payment
-    Razorpay-->>UI: Payment response
-
-    UI->>API: Verify payment
-    API->>Razorpay: Verify signature
-
-    alt Payment valid
-        API->>DB: Mark payment successful
-        DB-->>API: Persisted
-        API-->>UI: Payment successful
-        UI-->>Student: Payment completed
-    else Payment invalid
-        API->>DB: Mark payment failed
-        API-->>UI: Payment failed
+    par Card / handler flow
+        R-->>FE: payment id + signature
+        FE->>API: POST /api/payments/verify
+        API->>API: HMAC signature check + payment belongs to caller
+        API->>DB: COMPLETED (no-op if already COMPLETED)
+    and Webhook (server to server)
+        R->>API: payment.captured / order.paid / payment.failed / refund.created
+        API->>API: Verify x-razorpay-signature on raw body
+        API->>DB: COMPLETED / FAILED / REFUNDED (never downgrades COMPLETED)
+    and UPI / QR polling
+        FE->>API: POST /api/payments/check-status every 3 s
+        API->>R: Fetch payments for the order
+        API->>DB: COMPLETED if captured, FAILED if failed
     end
 ```
 
-14. Payment Idempotency
+Step by step:
+1. **Open the payment window.** The admin enters the total cost. It is split equally among confirmed and attended riders, and one `PENDING` payment is created per booking.
+2. **Create order.** The backend creates or reuses a Razorpay order and marks the payment `PROCESSING`.
+3. **Confirm payment.** Three independent paths can mark a payment `COMPLETED`, and all are idempotent:
+   - the Checkout handler calls `/verify` (signature and ownership checked server-side);
+   - Razorpay's webhook (HMAC-verified raw body);
+   - status polling, which asks Razorpay directly. This catches UPI/QR payments that finish on another device.
+4. **Abandoned checkout.** `/reset` moves `PROCESSING` back to `PENDING`, but first asks Razorpay whether the order was already captured, so a real payment is never lost.
+5. **Gate on new bookings.** While a student has a PENDING or FAILED payment, they cannot book new trips.
 
-Payment operations must be idempotent because Razorpay callbacks, browser retries, network retries, or duplicate requests must not create duplicate payment records.
+Payment states: `PENDING → PROCESSING → COMPLETED`, or `FAILED` (can retry). Later refunds move to `REFUNDED`. A `COMPLETED` payment is never downgraded.
+
+---
+
+## Idempotency
+
+Retries and double clicks must not repeat a write.
+- **Client keys.** The frontend sends an `Idempotency-Key` with writes such as booking, cancelling, creating orders and admin actions.
+- **Server cache.** The idempotency middleware stores each finished response for 24 hours and replays it on a retry. Requests already in progress with the same key wait for the first result instead of running twice.
+- **Per-caller scoping.** Cached responses are keyed by a SHA-256 hash of *caller token + method + URL + client key*, so one user's response can never be replayed to another user.
+- **Business-level idempotency.** Even without a key, the logic itself is safe to repeat:
+  - unique `(userId, tripId)` bookings;
+  - one cab assignment per booking;
+  - `skipDuplicates` when creating payments;
+  - payment verification and webhooks that are no-ops on an already-completed payment.
+
+---
+
+## Caching
+
+| Layer | What | Lifetime | Invalidated by |
+|---|---|---|---|
+| Backend user cache | Token → user record | 5 min | Approve, reject, block, admin change |
+| Backend idempotency store | Response per caller + key | 24 h | Expiry |
+| Frontend GET cache | API GET responses | 15 s | Any write request, login token change |
+| Frontend in-flight dedup | Identical GETs already in progress share one request | Until response | Any write, token change |
+
+---
+
+## Performance design
+
+- **Direct database connection with Prisma's pool.** The long-running server avoids the pooler's `pgbouncer=true` mode, which costs 4 round trips per query instead of 1.
+- **Pool warm-up.** All pool connections are opened at startup, so no request waits several seconds for a new database connection.
+- **One round trip per request where possible:**
+  - the user dashboard, admin dashboard and analytics summary each run as a single SQL statement;
+  - list endpoints run their count and page queries in parallel;
+  - `relationJoins` loads a list and its related rows in one statement.
+- **No work on the hot path.** Trip statuses are computed on read and persisted by the background job, not rescanned on every request.
+- **Frontend.** A short GET cache, in-flight request sharing, and no reload when switching browser tabs.
+
+Measured impact is documented in `Friday_Cab_Engineering_Report.docx`: about 91% lower latency across the main endpoints.
+
+---
+
+## Data model
+
 ```mermaid
-flowchart TD
-    Request["Payment Verification Request"]
+erDiagram
+    User ||--o{ Booking : makes
+    User ||--o{ Payment : pays
+    User ||--o{ CabAssignment : rides
+    Trip ||--o{ Booking : has
+    Trip ||--o{ Cab : uses
+    Trip ||--o{ Payment : collects
+    Booking ||--o| CabAssignment : "assigned to"
+    Booking ||--o| Payment : "settled by"
+    Cab ||--o{ CabAssignment : carries
 
-    Validate["Validate Payment Data"]
-
-    Lookup["Find Payment by Razorpay Payment ID"]
-
-    Exists{"Payment Already Successful?"}
-
-    Return["Return Existing Success"]
-
-    Verify["Verify Razorpay Signature"]
-
-    Valid{"Signature Valid?"}
-
-    Reject["Reject Payment"]
-
-    Update["Update Payment Status"]
-
-    Persist["Persist Transaction"]
-
-    Request --> Validate
-    Validate --> Lookup
-    Lookup --> Exists
-
-    Exists -->|Yes| Return
-    Exists -->|No| Verify
-
-    Verify --> Valid
-
-    Valid -->|No| Reject
-    Valid -->|Yes| Update
-
-    Update --> Persist
-    Persist --> Return
+    User {
+        string email UK
+        string rollNumber UK
+        string hall
+        boolean isAdmin
+        boolean isBlocked
+        string approvalStatus
+        string supabaseUserId UK
+    }
+    Trip {
+        datetime bookingStartTime
+        datetime bookingEndTime
+        datetime departureTime
+        string status
+        int maxBookings
+        int currentBookings
+        boolean paymentWindowOpen
+        float totalCost
+        float costPerPerson
+    }
+    Booking {
+        string status
+        boolean attended
+    }
+    Cab {
+        string vehicleType
+        int maxCapacity
+        int currentOccupancy
+    }
+    CabAssignment {
+        int seatNumber
+    }
+    Payment {
+        float amount
+        string status
+        string razorpayOrderId
+        string razorpayPaymentId
+    }
 ```
 
-15. Email Notification Workflow
-Email sending should not unnecessarily block the critical database operation.
-```mermaid
-sequenceDiagram
-    autonumber
+Integrity constraints: unique `(userId, tripId)` on Booking, unique `bookingId` on CabAssignment and Payment, unique `(cabId, seatNumber)`, cascading deletes from Trip and User.
 
-    participant API as Express API
-    participant DB as PostgreSQL
-    participant Email as Email Service
-    participant SMTP as SMTP Provider
-    actor User
+---
 
-    API->>DB: Create / update business record
-    DB-->>API: Transaction committed
+## Project structure
 
-    API->>Email: Trigger notification
-
-    Email->>SMTP: Send email
-
-    alt Email successful
-        SMTP-->>Email: Accepted
-        Email-->>API: Success
-    else Email failure
-        SMTP-->>Email: Error
-        Email-->>API: Failure
-        Email->>Email: Log / retry
-    end
-
-    SMTP-->>User: Email notification
+```
+backend/
+  prisma/schema.prisma        Data model (relationJoins enabled)
+  prisma/migrations/          SQL migrations
+  src/server.ts               App setup, middleware order, background job, pool warm-up
+  src/middleware/             auth, supabaseAuth, idempotency, validation, errorHandler, requestTiming
+  src/routes/                 auth, user, trip, booking, payment, paymentWebhook, admin, analytics
+  src/utils/                  prisma (client + user cache), email (Resend), razorpay, tripStatus, timezone
+frontend/
+  src/contexts/AuthContext.tsx  Session handling, user sync, identity check
+  src/services/api.ts           Axios client, token handling, GET cache, idempotency keys
+  src/pages/                    Login, Register, Dashboard, Trips, MyBookings, Payments, Profile
+  src/pages/admin/              AdminDashboard, TripManagement, CabAllocation, PaymentControl, UserManagement, Analytics
 ```
 
-16. Email Idempotency
+---
 
-The same event should not generate multiple emails when an API request is retried.
-```mermaid
-flowchart TD
-    Event["Business Event"]
+## Running locally
 
-    EventID["Generate Event ID"]
+```bash
+# backend
+cd backend
+npm install
+npx prisma generate
+npm run dev            # or: npm run build && npm start
 
-    Check["Check Email Event Log"]
-
-    Exists{"Already Sent?"}
-
-    Skip["Skip Duplicate Email"]
-
-    Create["Create Email Event"]
-    Send["Send Email"]
-    Mark["Mark Event as Sent"]
-
-    Event --> EventID
-    EventID --> Check
-    Check --> Exists
-
-    Exists -->|Yes| Skip
-    Exists -->|No| Create
-
-    Create --> Send
-    Send --> Mark
+# frontend
+cd frontend
+npm install
+npm run dev            # http://localhost:3000
 ```
 
-17. API Performance Optimization
+For local runs set `NODE_ENV=development` and `FRONTEND_URL=http://localhost:3000` in `backend/.env`, otherwise CORS only allows the production URL. In Supabase, keep **Authentication → Providers → Email → Confirm email** turned on; unapproved users rely on it to stay locked out.
 
-The major latency improvement came from eliminating unnecessary sequential operations and executing independent operations concurrently.
-```mermaid
-flowchart TD
-    Request["API Request"]
+---
 
-    Auth["Authenticate User"]
+## Environment variables
 
-    Parallel["Parallel Independent Queries"]
+**Backend (`backend/.env`)**
 
-    Q1["User Data"]
-    Q2["Bookings"]
-    Q3["Payments"]
-    Q4["Trip Statistics"]
+| Variable | Purpose |
+|---|---|
+| `DATABASE_URL` | Runtime connection (direct, port 5432, with `connection_limit`) |
+| `DIRECT_URL` | Connection used by Prisma migrations |
+| `SUPABASE_URL` / `SUPABASE_ANON_KEY` | Token verification (also read as `NEXT_PUBLIC_*`) |
+| `SUPABASE_SERVICE_ROLE_KEY` | Create, confirm and delete auth users |
+| `ADMIN_EMAILS` | Comma-separated bootstrap admins (auto-approved) |
+| `FRONTEND_URL`, `NODE_ENV`, `PORT` | CORS origin, mode, port |
+| `RESEND_API_KEY`, `RESEND_FROM_EMAIL` | Email sending |
+| `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET` | Payments and webhook verification |
 
-    Merge["Merge Results"]
+**Frontend (`frontend/.env`)**: `VITE_API_URL`, `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`.
 
-    Response["API Response"]
+Never commit `.env` files; they contain the database password and service-role key.
 
-    Request --> Auth
-    Auth --> Parallel
+---
 
-    Parallel --> Q1
-    Parallel --> Q2
-    Parallel --> Q3
-    Parallel --> Q4
+## Deployment notes
 
-    Q1 --> Merge
-    Q2 --> Merge
-    Q3 --> Merge
-    Q4 --> Merge
+- **Same region.** Host the backend in the same region as the Supabase database. Every query pays one network round trip, which is ~1–3 ms in the same region versus ~285 ms from India to a US database.
+- **IPv6.** If the host cannot reach the direct database host (IPv6-only on some Supabase plans), use Supabase's **Session pooler** URL. Do not use the transaction pooler with `pgbouncer=true`.
+- **Razorpay webhook.** Point it at `https://<backend>/api/payments/webhook` with the same secret as `RAZORPAY_WEBHOOK_SECRET`.
+- **Build.** Run `npm run build` before `npm start`; `start` runs the compiled `dist/server.js`.
 
-    Merge --> Response
-```
+---
 
-Before
-```mermaid
-flowchart LR
-    A["Request"] --> B["Query A"]
-    B --> C["Query B"]
-    C --> D["Query C"]
-    D --> E["Query D"]
-    E --> F["Response"]
+## Known limitations
 
-    L["Latency = A + B + C + D"]
-```
-
-After
-```mermaid
-flowchart LR
-    A["Request"] --> B["Authentication"]
-
-    B --> C["Parallel Execution"]
-
-    C --> Q1["Query A"]
-    C --> Q2["Query B"]
-    C --> Q3["Query C"]
-    C --> Q4["Query D"]
-
-    Q1 --> M["Merge"]
-    Q2 --> M
-    Q3 --> M
-    Q4 --> M
-
-    M --> R["Response"]
-
-    L["Latency ≈ Authentication + MAX(A,B,C,D)"]
-```
-
-19. Security Architecture
-```mermaid
-flowchart TD
-    Client["Browser / Client"]
-
-    HTTPS["HTTPS / TLS"]
-
-    CORS["CORS Validation"]
-    Helmet["Helmet Security Headers"]
-    Rate["Rate Limiting"]
-
-    Auth["Authentication"]
-    PKCE["PKCE Authentication Flow"]
-
-    JWT["Access Token Validation"]
-    Role["Role-Based Authorization"]
-
-    Zod["Zod Input Validation"]
-
-    Controller["Controller"]
-    Service["Business Logic"]
-
-    Prisma["Prisma ORM"]
-    DB["PostgreSQL"]
-
-    Client --> HTTPS
-    HTTPS --> CORS
-    CORS --> Helmet
-    Helmet --> Rate
-
-    Rate --> Auth
-    Auth --> PKCE
-    PKCE --> JWT
-    JWT --> Role
-
-    Role --> Zod
-    Zod --> Controller
-    Controller --> Service
-    Service --> Prisma
-    Prisma --> DB
-```
-
-20. Login Security Layers
-```mermaid
-flowchart TD
-    Login["Login Request"]
-
-    HTTPS["HTTPS"]
-    Rate["Rate Limiter"]
-
-    PKCE["PKCE Verification"]
-    Auth["Supabase Authentication"]
-
-    Token["Access Token"]
-
-    Middleware["Authentication Middleware"]
-
-    JWT["JWT / Token Validation"]
-
-    Role["Role Authorization"]
-
-    API["Protected API"]
-
-    Login --> HTTPS
-    HTTPS --> Rate
-    Rate --> PKCE
-    PKCE --> Auth
-
-    Auth --> Token
-    Token --> Middleware
-    Middleware --> JWT
-    JWT --> Role
-    Role --> API
-```
-
-21. Authorization / Role-Based Access Control
-```mermaid
-flowchart TD
-    Request["Incoming API Request"]
-
-    Token["Access Token"]
-    Verify["Verify Token"]
-
-    User["Authenticated User"]
-
-    RoleCheck{"Required Role?"}
-
-    Student["Student API"]
-    Admin["Admin API"]
-
-    Denied["403 Forbidden"]
-
-    Request --> Token
-    Token --> Verify
-    Verify --> User
-
-    User --> RoleCheck
-
-    RoleCheck -->|Student| Student
-    RoleCheck -->|Administrator| Admin
-    RoleCheck -->|Unauthorized| Denied
-```
-
-22. Complete Booking System — End-to-End
-This is the combined workflow diagram showing how the major components interact.
-```mermaid
-flowchart TD
-    Admin["Administrator"]
-    Student["Student"]
-
-    subgraph Frontend["React Frontend"]
-        AdminUI["Admin Panel"]
-        UserUI["Student Portal"]
-    end
-
-    subgraph API["Express Backend"]
-        Auth["Authentication"]
-        Validation["Validation"]
-        TripService["Trip Service"]
-        BookingService["Booking Service"]
-        CabService["Cab Allocation"]
-        PaymentService["Payment Service"]
-        EmailService["Email Service"]
-        Idempotency["Idempotency Layer"]
-    end
-
-    subgraph DB["PostgreSQL"]
-        TripDB["Trips"]
-        BookingDB["Bookings"]
-        UserDB["Users"]
-        CabDB["Cabs"]
-        AssignmentDB["Assignments"]
-        PaymentDB["Payments"]
-        EventDB["Idempotency / Event Records"]
-    end
-
-    subgraph External["External Services"]
-        Supabase["Supabase Auth"]
-        Razorpay["Razorpay"]
-        SMTP["SMTP / Email"]
-    end
-
-    Admin --> AdminUI
-    Student --> UserUI
-
-    AdminUI --> Auth
-    UserUI --> Auth
-
-    Auth --> Supabase
-
-    AdminUI --> Validation
-    UserUI --> Validation
-
-    Validation --> TripService
-    Validation --> BookingService
-    Validation --> CabService
-    Validation --> PaymentService
-
-    TripService --> TripDB
-    BookingService --> Idempotency
-    Idempotency --> BookingDB
-
-    CabService --> CabDB
-    CabService --> AssignmentDB
-
-    PaymentService --> PaymentDB
-    PaymentService --> Razorpay
-
-    TripService --> EmailService
-    BookingService --> EmailService
-    PaymentService --> EmailService
-
-    EmailService --> SMTP
-
-    Idempotency --> EventDB
-
-    UserDB --> Auth
-```
-
-23. Complete System Lifecycle
-```mermaid
-flowchart LR
-    A["Admin Creates Trip"]
-    B["Trip Persisted"]
-    C["Email Notification"]
-    D["Booking Window Opens"]
-    E["Student Books"]
-    F["Booking Persisted"]
-    G["Cab Allocation"]
-    H["Trip Completed"]
-    I["Attendance Marked"]
-    J["Payment Window Opens"]
-    K["Student Pays"]
-    L["Payment Verified"]
-    M["Payment Persisted"]
-    N["Trip Settled"]
-
-    A --> B
-    B --> C
-    B --> D
-    D --> E
-    E --> F
-    F --> G
-    G --> H
-    H --> I
-    I --> J
-    J --> K
-    K --> L
-    L --> M
-    M --> N
-```
-
-24. Reliability Model
-```mermaid
-flowchart TD
-    Request["Client Request"]
-
-    Validation["Input Validation"]
-    Auth["Authentication"]
-    Authorization["Authorization"]
-    Idempotency["Idempotency Check"]
-    Transaction["Database Transaction"]
-
-    Success["Successful Operation"]
-    Retry["Safe Retry"]
-    Failure["Controlled Failure"]
-    Rollback["Transaction Rollback"]
-
-    Request --> Validation
-    Validation --> Auth
-    Auth --> Authorization
-    Authorization --> Idempotency
-    Idempotency --> Transaction
-
-    Transaction --> Success
-
-    Transaction --> Failure
-    Failure --> Rollback
-
-    Request -. "Retry" .-> Idempotency
-    Idempotency --> Retry
-    Retry --> Success
-```
-
+- **Booking capacity race.** The capacity check and the `currentBookings` increment are separate statements. Two simultaneous bookings for the last seat can both succeed. A transaction with a conditional update would close this.
+- **Single-instance in-memory stores.** The user cache and idempotency store live in process memory. Running several backend instances would need a shared store such as Redis.
+- **Sequential auto-assign writes.** Auto-assign writes one row at a time. Fine for tens of riders; batching would help for larger trips.
